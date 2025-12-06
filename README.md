@@ -44,7 +44,19 @@ Erweitert Person-Entities um konfigurierbare Status-Zustände. Prüft verschiede
 
 ## Installation
 
-### Methode 1: Direkter Import über GitHub (Empfohlen)
+### Ein-Klick-Installation (Empfohlen)
+
+Klicke auf einen der folgenden Buttons, um das Blueprint direkt in Home Assistant zu importieren:
+
+**TG Schichtplan - Schichtprüfung:**
+[![Open your Home Assistant instance and show the blueprint import dialog with a specific blueprint pre-filled.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Fquietcry%2FtgBlueprints%2Fmain%2Fblueprints%2Fautomation%2Ftgshiftschedule.yaml)
+
+**Extended Person States:**
+[![Open your Home Assistant instance and show the blueprint import dialog with a specific blueprint pre-filled.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Fquietcry%2FtgBlueprints%2Fmain%2Fblueprints%2Fautomation%2FtgPersonState.yaml)
+
+### Manuelle Installation
+
+Falls die Buttons nicht funktionieren, kannst du die Blueprints auch manuell importieren:
 
 1. Öffne Home Assistant
 2. Gehe zu **Einstellungen** → **Automatisierungen & Szenen**
@@ -63,7 +75,7 @@ https://raw.githubusercontent.com/quietcry/tgBlueprints/main/blueprints/automati
 
 5. Klicke auf **Blueprint importieren**
 
-### Methode 2: Manueller Download
+### Manueller Download
 
 1. Lade die gewünschte YAML-Datei von GitHub herunter
 2. Speichere sie in deinem `config/blueprints/automation/` Verzeichnis
