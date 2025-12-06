@@ -1,0 +1,45 @@
+blueprint:
+  name: tgDeleteNotification
+  domain: automation
+  description: >-
+    closes notifications after a specified number of minutes
+  input:
+    searchkey:
+      name: "search key"
+      description: string for filtering in notification title, regex allowed
+      default: 
+      selector:
+        text:
+    delayminutes:
+      name: "Minutes"
+      description: Number of minutes until deletion
+      default: 
+      selector:
+        number:
+          min: 0
+          max: 30
+          mode: box
+          unit_of_measurement: minutes 
+variables:
+  searchkey: !input searchkey
+  delayminutes: !input delayminutes
+
+triggers:
+  - trigger: persistent_notification
+    update_type:
+      - added
+    notification_id: ""
+conditions:
+  - condition: template
+    value_template: "{{ trigger.notification.title is search(searchkey)}}"
+actions:
+  - delay:
+      hours: 0
+      minutes: "{{delayminutes}}"
+      seconds: 0
+      milliseconds: 0
+  - action: persistent_notification.dismiss
+    data:
+      notification_id: "{{ trigger.notification.notification_id }}"
+mode: parallel
+max: 50

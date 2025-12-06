@@ -1,0 +1,1605 @@
+
+
+
+blueprint:
+  name: tgSprinkler
+  description: Eine kombinierte Bewässerungs-Automation, die auf state_changed-Events reagiert und nur relevante Geräte berücksichtigt. Wird auch beim Neustart von Home Assistant ausgeführt.
+  domain: automation
+  author: 'quietcry'
+  homeassistant:
+    min_version: '2023.8.0'
+
+  input:
+    # Core-Inputs (Notwendige Eingaben)
+    input_section_devices:
+      name: Notwendige Angaben
+      icon: mdi:cog-outline
+      collapsed: true
+      description: Sensoren und Ventile
+      input:
+        main_switch:
+          name: Hauptschalter
+          description: Der Hauptschalter, der die gesamte Automation ein- und ausschaltet.
+          selector:
+            entity:
+              filter:
+                domain:
+                  - switch
+                  - input_boolean
+    
+        schedule_helper:
+          name: Zeitplan-Helfer
+          description: Der Schedule-Helfer, der die Zeiträume für die Bewässerung definiert.
+          selector:
+            entity:
+              filter:
+                domain:
+                  - schedule
+                  - input_boolean
+    
+        irrigation_switches:
+          name: Bewässerungsschalter
+          description: Eine Liste von Schaltern oder Relais, die die Bewässerung steuern.
+          default: []
+          selector:
+            entity:
+              multiple: true
+              filter:
+                domain: switch
+    
+        water_timer:
+          name: Bewässerungs-Timer
+          description: Der Timer-Helfer, der die Dauer der Bewässerung steuert und automatisch gestartet wird.
+          selector:
+            entity:
+              filter:
+                domain: timer
+    
+        water_timer_duration:
+          name: Dauer Autobewässerung
+          default: 30
+          selector:
+            number:
+              unit_of_measurement: seconds
+              step: 1
+              mode: box
+    
+        pause_timer:
+          name: Pausen-Timer
+          description: Der Timer-Helfer, der die Dauer der Pause steuert.
+          selector:
+            entity:
+              filter:
+                domain: timer
+    
+        pause_timer_duration:
+          name: Dauer der Pause zwischen den Bewässerungen
+          default: 240
+          selector:
+            number:
+              unit_of_measurement: seconds
+              step: 1
+              mode: box
+    
+    # Sensor-Inputs (Optionale Sensoren)
+    input_section_sensors:
+      name: Optionale Sensoren
+      icon: mdi:water-plus
+      collapsed: true
+      description: Bodenfeuchtigkeitssensoren und Regensensor
+      input:
+        moisture_sensors:
+          name: Bodenfeuchtigkeitssensoren
+          description: Eine Liste von Sensoren, die die Bodenfeuchtigkeit messen (optional).
+          default: []
+          selector:
+            entity:
+              multiple: true
+              filter:
+                domain: sensor
+    
+        moisture_limit:
+          name: Minimales Feuchtigkeitslimit
+          description: Die minimale Bodenfeuchtigkeit, unter der die Bewässerung starten soll (in %).
+          default: 60
+          selector:
+            number:
+              min: 0
+              max: 100
+              unit_of_measurement: '%'
+              mode: box
+    
+        moisture_buffer:
+          name: Regelbereich für Feuchtigkeitslimit
+          description: Der zusätzliche Bereich (in %), der überschritten werden darf, bevor die Bewässerung gestoppt wird.
+          default: 10
+          selector:
+            number:
+              min: 0
+              max: 50
+              unit_of_measurement: '%'
+              mode: box
+    
+        moisture_calculation_logic:
+          name: Berechnungslogik für Feuchtigkeitslimit
+          description: Wählen Sie die Methode zur Berechnung des Vergleichswerts aus mehreren Sensoren.
+          default: minimum
+          selector:
+            select:
+              options:
+                - label: Minimum (niedrigster Wert)
+                  value: minimum
+                - label: Durchschnitt (Mittelwert)
+                  value: average
+                - label: Maximum (höchster Wert)
+                  value: maximum
+                - label: Median (mittlerer Wert)
+                  value: median
+    
+        weather_sensor:
+          name: Regensensor
+          description: Der Sensor, der den aktuellen Wetterstatus angibt (optional).
+          default: none
+          selector:
+            entity:
+              filter:
+                domain: weather
+    
+    # Advanced Configuration
+    input_section_advanced:
+      name: Erweiterte Konfiguration
+      icon: mdi:code-json
+      collapsed: true
+      description: Fügen Sie hier benutzerdefinierte YAML-Konfigurationen hinzu, um das Verhalten der Automation anzupassen.
+      input:
+        advanced_config:
+          name: Erweiterte YAML-Konfiguration
+          description: |
+            Hier können Sie alle Eingabeparameter auch direkt in YAML definieren. Die Werte überschreiben die über die UI eingegebenen Werte.
+    
+            <details>
+            <summary>Beispiel und Details</summary>
+    
+            Hier können Sie alle Eingabeparameter auch direkt in YAML definieren. Die Werte überschreiben die über die UI eingegebenen Werte.
+    
+            **Zahlenhelfer:**
+            Sie können die festen Werte durch Zahlenhelfer ersetzen:
+            ```yaml
+            advanced_config:
+              # Zahlenhelfer für die Werte
+              water_timer_duration_helper: input_number.tgSprinkler_waterduration
+              pause_timer_duration_helper: input_number.tgSprinkler_pauseduration
+              moisture_limit_helper: input_number.tgSprinkler_moisturelimit
+              moisture_buffer_helper: input_number.tgSprinkler_moisturebuffer
+              manual_mode_helper: input_boolean.tgSprinkler_manualmode
+              manual_duration_helper: input_number.tgSprinkler_manualduration
+              moisture_calculation_result_helper: input_number.tgSprinkler_moisturecalculation  # Helper für das Berechnungsergebnis der Bodenfeuchtigkeit
+            ```
+    
+            Der `moisture_calculation_result_helper` ist ein optionaler Helper, der das Ergebnis der Feuchtigkeitsberechnung (basierend auf der gewählten Berechnungslogik) speichert. Dies ist nützlich für:
+            - Visualisierung des berechneten Wertes in der UI
+            - Verwendung des Wertes in anderen Automatisierungen
+            - Debugging der Feuchtigkeitsberechnung
+    
+            **Standard-Konfiguration:**
+            ```yaml
+            # Zeitplan und Timer
+            schedule_helper: schedule.bewaesserung_zeitplan
+            water_timer: timer.bewaesserung
+            water_timer_duration: 30
+            pause_timer: timer.bewaesserung_pause
+            pause_timer_duration: 240
+    
+            # Bewässerungsschalter
+            irrigation_switches:
+              - switch.bewaesserung_zone1
+              - switch.bewaesserung_zone2
+    
+            # Sensoren
+            moisture_sensors:
+              - sensor.bodenfeuchtigkeit_zone1
+              - sensor.bodenfeuchtigkeit_zone2
+            moisture_limit: 60
+            moisture_buffer: 10
+            moisture_calculation_logic: average
+    
+            # Wetter
+            weather_sensor: weather.home
+    
+            # Debug
+            debug_mode: false
+            ```
+            </details>
+          default: {}
+          selector:
+            object:
+    
+    # Debugging & Erweiterte Einstellungen
+    input_section_debug:
+      name: Debugging und Erweiterte Einstellungen
+      icon: mdi:wrench-clock
+      collapsed: true
+      description: Debugging und erweiterte Optionen
+      input:
+        debug_mode:
+          name: Debug-Modus
+          description: Aktiviere diesen Modus, um Debug-Nachrichten in die Home Assistant Logs und die Benachrichtigungen zu schreiben. Dies ist hilfreich für die Fehlerbehebung.
+          default: false
+          selector:
+            boolean:
+
+variables:
+  # Variables
+  userInputs:
+    {
+      'debug_mode': !input debug_mode,
+      'schedule_helper': !input schedule_helper,
+      'main_switch': !input main_switch,
+      'irrigation_switches': !input irrigation_switches,
+      'water_timer': !input water_timer,
+      'water_timer_duration': !input water_timer_duration,
+      'pause_timer': !input pause_timer,
+      'pause_timer_duration': !input pause_timer_duration,
+      'moisture_sensors': !input moisture_sensors,
+      'moisture_limit': !input moisture_limit,
+      'moisture_buffer': !input moisture_buffer,
+      'moisture_calculation_logic': !input moisture_calculation_logic,
+      'weather_sensor': !input weather_sensor,
+      'advanced_config': !input advanced_config,
+    }
+  
+  validInputs: >-
+    {# Namespace initialisieren #}
+    {%- set ns = namespace(inputs={}, error=[], warning=[], devices={}) -%}
+    
+    
+    
+    {%- set ns.inputs = {
+      'main_switch': userInputs.main_switch | default('-'),
+      'schedule_helper': userInputs.schedule_helper | default('-'),
+      'irrigation_switches': userInputs.irrigation_switches | default([]),
+      'water_timer': userInputs.water_timer | default('-'),
+      'water_timer_duration': userInputs.water_timer_duration | default(300),
+      'pause_timer': userInputs.pause_timer | default('-'),
+      'pause_timer_duration': userInputs.pause_timer_duration | default(600),
+      'moisture_sensors': userInputs.moisture_sensors | default([]),
+      'moisture_limit': userInputs.moisture_limit | default(50),
+      'moisture_buffer': userInputs.moisture_buffer | default(10),
+      'moisture_calculation_logic': userInputs.moisture_calculation_logic | default('minimum'),
+      'weather_sensor': userInputs.weather_sensor | default('-'),
+      'debug_mode': userInputs.debug_mode | string | lower == 'true'
+    } -%}
+    
+    {# Advanced Config verarbeiten #}
+    {%- if userInputs.advanced_config is defined and userInputs.advanced_config != {} -%}
+      {%- for key, value in userInputs.advanced_config.items() -%}
+        {%- if value is not none and key != 'debug_mode' -%}
+          {%- if key in ['irrigation_switches', 'moisture_sensors'] and value is sequence -%}
+            {%- set base_list = ns.inputs[key] | default([]) -%}
+            {%- set combined_list = [] -%}
+            {%- for item in base_list -%}
+              {%- set combined_list = combined_list + [item] -%}
+            {%- endfor -%}
+            {%- for item in value -%}
+              {%- if item not in combined_list -%}
+                {%- set combined_list = combined_list + [item] -%}
+              {%- endif -%}
+            {%- endfor -%}
+            {%- set ns.inputs = dict(ns.inputs, **{key: combined_list}) -%}
+          {%- else -%}
+            {%- set ns.inputs = dict(ns.inputs, **{key: value}) -%}
+          {%- endif -%}
+        {%- endif -%}
+      {%- endfor -%}
+    {%- endif -%}
+    
+    {# Zahlenhelfer verarbeiten #}
+    {%- if ns.inputs.water_timer_duration_helper is defined -%}
+      {%- set helper_value = states(ns.inputs.water_timer_duration_helper) | string | float(default=ns.inputs.water_timer_duration) -%}
+      {%- set old_value = ns.inputs.water_timer_duration -%}
+      {%- set ns.inputs = dict(ns.inputs, **{'water_timer_duration': helper_value}) -%}
+      {%- set ns.inputs = dict(ns.inputs, **{'water_timer_duration_debug': "Helper: " ~ ns.inputs.water_timer_duration_helper ~ " | Wert: " ~ helper_value ~ " | Alt: " ~ old_value}) -%}
+    {%- endif -%}
+    {%- if ns.inputs.pause_timer_duration_helper is defined -%}
+      {%- set helper_value = states(ns.inputs.pause_timer_duration_helper) | string | float(default=ns.inputs.pause_timer_duration) -%}
+      {%- set old_value = ns.inputs.pause_timer_duration -%}
+      {%- set ns.inputs = dict(ns.inputs, **{'pause_timer_duration': helper_value}) -%}
+      {%- set ns.inputs = dict(ns.inputs, **{'pause_timer_duration_debug': "Helper: " ~ ns.inputs.pause_timer_duration_helper ~ " | Wert: " ~ helper_value ~ " | Alt: " ~ old_value}) -%}
+    {%- endif -%}
+    {%- if ns.inputs.moisture_limit_helper is defined -%}
+      {%- set ns.inputs = dict(ns.inputs, **{'moisture_limit': states(ns.inputs.moisture_limit_helper) | string | float(default=ns.inputs.moisture_limit)}) -%}
+    {%- endif -%}
+    {%- if ns.inputs.moisture_buffer_helper is defined -%}
+      {%- set ns.inputs = dict(ns.inputs, **{'moisture_buffer': states(ns.inputs.moisture_buffer_helper) | string | float(default=ns.inputs.moisture_buffer)}) -%}
+    {%- endif -%}
+    
+    {# Berechne die manuelle Bewässerungszeit #}
+    {%- if ns.inputs.manual_duration_helper is defined -%}
+      {%- set helper_value = states(ns.inputs.manual_duration_helper) | string | float(default=ns.inputs.water_timer_duration) -%}
+      {%- set ns.inputs = dict(ns.inputs, **{'manual_duration': helper_value}) -%}
+      {%- set ns.inputs = dict(ns.inputs, **{'manual_duration_debug': "Helper: " ~ ns.inputs.manual_duration_helper ~ " | Wert: " ~ helper_value ~ " | Alt: " ~ ns.inputs.water_timer_duration}) -%}
+    {%- elif ns.inputs.manual_duration is defined -%}
+      {%- set ns.inputs = dict(ns.inputs, **{'manual_duration': ns.inputs.manual_duration}) -%}
+    {%- else -%}
+      {%- set ns.inputs = dict(ns.inputs, **{'manual_duration': ns.inputs.water_timer_duration}) -%}
+    {%- endif -%}
+    
+    
+    
+    {# isDevice Makro für Geräteprüfung #}
+    {%- macro isDevice(devs) -%}
+        {%- set nsm = namespace(found=false) -%}
+        {%- if devs is list -%}
+            {%- set nsm.found = [] -%}
+            {%- for dev in devs -%}
+                {%- if states(dev) != "unknown" -%}
+                    {%- set nsm.found = nsm.found + [dev] -%}
+                {%- endif -%}
+            {%- endfor -%}
+        {%- elif devs is string -%}
+            {%- if states(devs) != "unknown" -%}
+                {%- set nsm.found = devs -%}
+            {%- else -%}
+                {%- set nsm.found = none -%}
+            {%- endif -%}
+        {%- endif -%}
+        {{- nsm.found|to_json -}}
+    {%- endmacro -%}
+    
+    {# Geräteprüfung #}
+    {%- set ns.devices = {} -%}
+    {%- set ns.devices = dict(ns.devices, **{"sprinklers": isDevice(ns.inputs.irrigation_switches)|from_json }) -%}
+    {%- set ns.devices = dict(ns.devices, **{"moistsensors": isDevice(ns.inputs.moisture_sensors)|from_json }) -%}
+    {%- set ns.devices = dict(ns.devices, **{"sprinkletimer": isDevice(ns.inputs.water_timer)|from_json }) -%}
+    {%- set ns.devices = dict(ns.devices, **{"idletimer": isDevice(ns.inputs.pause_timer)|from_json }) -%}
+    {%- set ns.devices = dict(ns.devices, **{"schedule": isDevice(ns.inputs.schedule_helper)|from_json }) -%}
+    {%- set ns.devices = dict(ns.devices, **{"main": isDevice(ns.inputs.main_switch)|from_json }) -%}
+    
+    {# moisture Limit Berechnung
+       Diese Berechnung ermittelt den aktuellen Feuchtigkeitswert basierend auf den konfigurierten Feuchtigkeitssensoren.
+       Die Variable calculatedMoistureLimit enthält den berechneten Wert gemäß der ausgewählten Berechnungslogik (minimum, maximum, average, median).
+       Dieser Wert wird später in der Automation mit dem moisture_limit verglichen, um zu entscheiden ob bewässert werden soll.
+       - Bei minimum (Standard): Bewässerung startet, wenn der niedrigste Sensorwert unter das Limit fällt
+       - Bei maximum: Bewässerung startet, wenn der höchste Sensorwert unter das Limit fällt
+       - Bei average: Bewässerung startet, wenn der Durchschnitt unter das Limit fällt
+       - Bei median: Bewässerung startet, wenn der Median unter das Limit fällt
+    #}
+    {%- set calculatedMoistureLimit = 11 -%}
+    {%- if ns.inputs.moisture_sensors | length > 0 -%}
+    
+      {%- set ns.valid_sensors = [] -%}
+      {%- for sensor in ns.inputs.moisture_sensors -%}
+        {%- if states(sensor) != "unknown" and states(sensor) != "unavailable" -%}
+          {%- set ns.valid_sensors = ns.valid_sensors + [sensor] -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {%- if ns.valid_sensors | length > 0 -%}
+        {%- set ns.sensor_values = [] -%}
+        {%- for sensor in ns.valid_sensors -%}
+          {%- set sensor_value = states(sensor) | float(default=none) -%}
+          {%- if sensor_value is not none -%}
+            {%- set ns.sensor_values = ns.sensor_values + [sensor_value] -%}
+          {%- endif -%}
+        {%- endfor -%}
+    
+        {%- if ns.sensor_values | length > 0 -%}
+          {%- if ns.inputs.moisture_calculation_logic == 'maximum' -%}
+            {%- set calculatedMoistureLimit = ns.sensor_values | max() -%}
+          {%- elif ns.inputs.moisture_calculation_logic == 'average' -%}
+            {%- set calculatedMoistureLimit = ns.sensor_values | sum() / ns.sensor_values | length -%}
+          {%- elif ns.inputs.moisture_calculation_logic == 'median' -%}
+            {%- set calculatedMoistureLimit = (ns.sensor_values | sort())[ns.sensor_values | length // 2] -%}
+          {%- else -%}
+            {%- set calculatedMoistureLimit = ns.sensor_values | min() -%}
+          {%- endif -%}
+        {%- endif -%}
+      {%- endif -%}
+    {%- endif -%}
+    {%- set ns.inputs = dict(ns.inputs, **{"calculatedMoistureLimit": calculatedMoistureLimit }) -%}
+    
+    {# Validierung der Inputs #}
+    {%- if not ns.inputs.schedule_helper or ns.devices.schedule is none -%}
+      {%- set ns.error = ns.error + ['Zeitplan nicht gefunden, ist schedule_helper definiert?'] -%}
+    {%- endif -%}
+    
+    {%- if not ns.inputs.main_switch or ns.devices.main_switch is none -%}
+      {%- set ns.error = ns.error + ['Hauptschalter nicht definiert?'] -%}
+    {%- endif -%}
+    
+    {%- if ns.inputs.irrigation_switches | length == 0 -%}
+      {%- set ns.warning = ns.warning + ['irrigation_switches ist nicht definiert oder leer'] -%}
+    {%- endif -%}
+    
+    {%- if not ns.inputs.water_timer -%}
+      {%- set ns.error = ns.error + ['water_timer ist nicht definiert'] -%}
+    {%- endif -%}
+    
+    {%- if not ns.inputs.pause_timer -%}
+      {%- set ns.error = ns.error + ['pause_timer ist nicht definiert'] -%}
+    {%- endif -%}
+    
+    {%- if not ns.inputs.water_timer_duration or (ns.inputs.water_timer_duration | string | float(default=0)) <= 0 -%}
+      {%- set ns.error = ns.error + ['water_timer_duration muss größer als 0 sein'] -%}
+    {%- endif -%}
+    
+    {%- if not ns.inputs.pause_timer_duration or (ns.inputs.pause_timer_duration | string | float(default=0)) <= 0 -%}
+      {%- set ns.error = ns.error + ['pause_timer_duration muss größer als 0 sein'] -%}
+    {%- endif -%}
+    
+    {%- if not ns.inputs.moisture_sensors or ns.inputs.moisture_sensors | length == 0 -%}
+      {%- set ns.warning = ns.warning + ['moisture_sensors ist nicht definiert oder leer'] -%}
+    {%- endif -%}
+    
+    {%- if (ns.inputs.moisture_limit | string | float(default=0)) < 0 or (ns.inputs.moisture_limit | string | float(default=0)) > 100 -%}
+      {%- set ns.warning = ns.warning + ['moisture_limit muss zwischen 0 und 100 liegen'] -%}
+    {%- endif -%}
+    
+    {%- if (ns.inputs.moisture_buffer | string | float(default=0)) < 0 or (ns.inputs.moisture_buffer | string | float(default=0)) > 20 -%}
+      {%- set ns.warning = ns.warning + ['moisture_buffer muss zwischen 0 und 20 liegen'] -%}
+    {%- endif -%}
+    
+    
+    {%- if not ns.inputs.calculatedMoistureLimit is defined -%}
+      {%- set ns.error = ns.error + ['calculatedMoistureLimit ist nicht definiert'] -%}
+    {%- elif ns.inputs.calculatedMoistureLimit is none -%}
+      {%- set ns.error = ns.error + ['calculatedMoistureLimit ist None'] -%}
+    {%- elif (ns.inputs.calculatedMoistureLimit | string | float(default=0)) < 0 or (ns.inputs.calculatedMoistureLimit | string | float(default=0)) > 100 -%}
+      {%- set ns.error = ns.error + ['ungewöhnlicher Wert der Feuchtigkeitslimitberechnung (sollte zwischen 0 und 100 liegen)'] -%}
+    {%- endif -%}
+    
+    {%- if not ns.inputs.weather_sensor or ns.inputs.weather_sensor == '-' or ns.inputs.weather_sensor == 'none' -%}
+      {%- set ns.warning = ns.warning + ['weather_sensor zur Regenerkennung ist nicht definiert'] -%}
+    {%- endif -%}
+    
+    {# Zusätzliche Validierung basierend auf Geräteprüfung #}
+    {%- if ns.devices.sprinklers is none or (ns.devices.sprinklers is sequence and ns.devices.sprinklers | length == 0) -%}
+      {%- set ns.warning = ns.warning + ['Keine gültigen Bewässerungsschalter gefunden'] -%}
+    {%- endif -%}
+    
+    {%- if ns.devices.moistsensors is none or (ns.devices.moistsensors is sequence and ns.devices.moistsensors | length == 0) -%}
+      {%- set ns.warning = ns.warning + ['Keine gültigen Feuchtigkeitssensoren gefunden'] -%}
+    {%- endif -%}
+    
+    {%- if ns.devices.sprinkletimer is none -%}
+      {%- set ns.error = ns.error + ['Bewässerungstimer nicht gefunden'] -%}
+    {%- endif -%}
+    
+    {%- if ns.devices.idletimer is none -%}
+      {%- set ns.error = ns.error + ['Pausentimer nicht gefunden'] -%}
+    {%- endif -%}
+    
+    {%- if ns.inputs.debug_mode is not defined -%}
+      {%- set ns.inputs = dict(ns.inputs, **{'debug_mode': false}) -%}
+    {%- endif -%}
+    
+    
+    {# Rückgabe der Daten #}
+    {{- {"inputs": ns.inputs, "error": ns.error, "warning": ns.warning, "devices": ns.devices} -}}
+  
+  observed: >-
+    {%- set ns = namespace() -%}
+    {%- set ns.observed = [] -%}
+    
+    {%- macro isValidEntity(entity) -%}
+      {{- entity is defined and entity != 'none' and entity != '-' -}}
+    {%- endmacro -%}
+    
+    {%- macro addToObserved(entity) -%}
+      {%- if isValidEntity(entity) and entity not in ns.observed -%}
+        {%- set ns.observed = ns.observed + [entity] -%}
+      {%- endif -%}
+    {%- endmacro -%}
+    
+    {%- for sensor in validInputs.inputs.moisture_sensors -%}
+      {{- addToObserved(sensor) -}}
+    {%- endfor -%}
+    
+    {%- for key, value in validInputs.inputs.items() -%}
+      {%- if value is defined and value is not none and value is string and (key[-7:] == '_helper' or key[-6:] == '_timer' or key[-7:] == '_sensor' or key[-7:] == '_switch') -%}
+        {{- addToObserved(value) -}}
+      {%- endif -%}
+    {%- endfor -%}
+    
+    {{- ns.observed -}}
+
+trigger:
+  # Trigger
+  - platform: event
+    event_type: state_changed
+    id: statechanged
+    variables:
+      triggerdevice: >-
+        {{- { 'id': trigger.event.data.entity_id } -}}
+  
+  - platform: homeassistant
+    event: start
+    id: haStart
+    variables:
+      triggerdevice: >-
+        {{- {'id':"haStart"} -}}
+  
+  - platform: state
+    entity_id: input_boolean.dev_loadconfig
+    from: 'on'
+    to: 'off'
+    id: 'reloadConfig'
+    variables:
+      triggerdevice: >-
+        {{- {'id':"haReload"} -}}
+
+condition:
+  # Conditions
+  - condition: or
+    conditions:
+      - condition: and
+        conditions:
+          - condition: trigger
+            id:
+              - haStart
+              - reloadConfig
+          - condition: template
+            value_template: >
+              {%- set mainswitchoff = states(validInputs.inputs.main_switch) != 'on' -%}
+              {{- not mainswitchoff -}}
+  
+      - condition: template
+        value_template: >
+          {%- if triggerdevice is defined and triggerdevice.id is defined and triggerdevice.id in observed -%}
+            {%- set domain = triggerdevice.id.split('.')[0] -%}
+            {%- set mainswitchoff = states(validInputs.inputs.main_switch) != 'on' -%}
+            {%- if domain == 'timer' and states(triggerdevice.id) != "idle" -%}
+              {{- false -}}
+            {%- elif triggerdevice.id == validInputs.inputs.main_switch or not mainswitchoff -%}
+              {{- true -}}
+            {%- else -%}
+              {{- false -}}
+            {%- endif -%}
+          {%- else -%}
+            {{- false -}}
+          {%- endif -%}
+
+action:
+  # Actions
+  # Initial Debug Block
+  
+  - if:
+      - condition: template
+        value_template: '{{validInputs.inputs.debug_mode}}'
+    then:
+      - variables:
+          debugMsg: >-
+            {# ___________________________________________________ #}
+            {%- macro dumpToHTML(val, filter=[], maxSteps=3, testJson=false, details=0, thisStep=0) -%}
+              {%- set patternMap = '^[\s]*\{[\S\s]*\}[\s]*$' -%}
+              {%- set patternList = '^[\s]*\[[\S\s]*\][\s]*$' -%}
+            
+              {%- set dump = namespace() -%} 
+              {%- set dump.tmp="" -%}
+              {%- set dump.val=val -%}
+              {%- set dump.valType=none -%}
+              {%- set myFilter=filter -%}
+              {%- set filter=[] -%}
+              {%- set thisStep=thisStep + 1 -%}
+              
+              {%- if thisStep > maxSteps -%}
+                {%- if dump.val is list or dump.val is mapping -%} {%- set dump.tmp = dump.val|to_json -%} {%- else -%} {%- set dump.tmp = dump.val -%} {%- endif -%}
+                {%- set dump.valType="json" -%}
+              {%- else -%}
+                {%- if dump.val is string and testJson == true and ( dump.val is search(patternMap) or dump.val is search(patternList) )-%}
+                  {%- set dump.val=dump.val|replace("'", '"')|from_json -%}
+                {%- endif -%}
+                {%- if dump.val is list -%}
+                  {%- set dump.valType="list" -%}
+                  {%- set dump.tmp = dump.tmp ~ "<ul>" -%} 
+                  {%- for item in dump.val -%}
+                    {%- set myDump = dumpToHTML(item, filter, maxSteps, testJson, details, thisStep)|from_json -%}
+                    {%- set dump.tmp = dump.tmp ~ "<li>" ~ myDump[1] ~ "</li>" -%}
+                  {%- endfor -%}
+                  {%- set dump.tmp = dump.tmp ~ "</ul>" -%} 
+                {%- elif dump.val is mapping -%}
+                  {%- set dump.valType="dict" -%}
+                  {%- set dump.tmp = dump.tmp ~ "<ul>" -%} 
+                  {%- for name, item in dump.val.items() -%}
+                    {%- if thisStep > 1 or name not in myFilter -%}
+                      {%- set preTxt = "<li>" -%}
+                      {%- set postTxt = "</li>" -%}
+                      {%- set nameTxtStart = "<b>" -%}
+                      {%- set NameTxtEnd = "</b>" -%}
+                      {%- set myDump = dumpToHTML(item, filter, maxSteps, testJson, details, thisStep)|from_json -%}
+                      {%- if details == thisStep and myDump[0] == "dict" -%}
+                        {%- set preTxt = preTxt ~ "<details>" -%}
+                        {%- set postTxt = "</details>" ~ postTxt -%}
+                        {%- set nameTxtStart = "<summary>" ~ nameTxtStart -%}
+                        {%- set NameTxtEnd = NameTxtEnd ~ "</summary>" -%}
+                      {%- endif -%}
+            
+                      {%- set dump.tmp = dump.tmp ~ preTxt ~ nameTxtStart ~ name ~ ": " ~ NameTxtEnd ~ myDump[1] ~ postTxt -%}
+                    {%- endif -%}
+                  {%- endfor -%}
+                  {%- set dump.tmp = dump.tmp ~ "</ul>" -%} 
+                {%- elif dump.val is string or dump.val is number -%}
+                  {%- set dump.tmp = dump.tmp ~ " " ~ dump.val ~ "" -%} 
+                  {%- set dump.valType="string" -%}
+                {%- endif -%}
+              {%- endif -%}
+            
+              {%- if thisStep == 1 -%}
+                {{- dump.tmp -}}
+              {%- else -%}
+                {{- [dump.valType, dump.tmp]|to_json -}}
+              {%- endif -%}
+            {%- endmacro -%}
+            {% set ns = namespace() %}
+            {% set ns.switch_states = [] %}
+            {% for switch in validInputs.inputs.irrigation_switches %}
+              {% set ns.switch_states = ns.switch_states + ["<li>" ~ switch ~ ": " ~ states(switch) ~ "</li>"] %}
+            {% endfor %}
+            {% set ns.sensor_states = [] %}
+            {% for sensor in validInputs.inputs.moisture_sensors %}
+              {% set ns.sensor_states = ns.sensor_states + ["<li>" ~ sensor ~ ": " ~ states(sensor) ~ "</li>"] %}
+            {% endfor %}
+            {{ "<h3>Konfiguration:</h3><ul>"
+            ~ "<li>Validierte Inputs:<br>" ~ dumpToHTML(validInputs, [], 5, false, 3) ~ "</li>"
+            ~ "<li>Beobachtete Geräte:<br>" ~ dumpToHTML(observed, [], 5, false, 3) ~ "</li>"
+            ~ "<li>Ausführungspfad:<br>" ~ dumpToHTML(executedPath, [], 5, false, 3) ~ "</li>"
+            ~ "</ul>"
+            ~ "<h3>Trigger:</h3><ul>"
+            ~ "<li>Entity: " ~ (trigger.entity_id if trigger is defined and trigger.entity_id is defined else '-') ~ "</li>"
+            ~ "<li>Platform: " ~ (trigger.platform if trigger is defined and trigger.platform is defined else '-') ~ "</li>"
+            ~ "<li>Event: " ~ (trigger.event if trigger is defined and trigger.event is defined else '-') ~ "</li>"
+            ~ "<li>Von: " ~ (trigger.from_state.state if trigger is defined and trigger.from_state is defined else '-') ~ "</li>"
+            ~ "<li>Nach: " ~ (trigger.to_state.state if trigger is defined and trigger.to_state is defined else '-') ~ "</li>"
+            ~ "</ul>"
+            ~ "<h3>Aktuelle Zustände:</h3><ul>"
+            ~ "<li>Bewässerungsschalter: <ul>"
+            ~ (ns.switch_states|join('') if ns.switch_states else '<li>Keine Bewässerungsschalter konfiguriert</li>')
+            ~ "</ul></li>"
+            ~ "<li>Feuchtigkeitssensoren: <ul>"
+            ~ (ns.sensor_states|join('') if ns.sensor_states else '<li>Keine Feuchtigkeitssensoren konfiguriert</li>')
+            ~ "</ul></li>"
+            ~ "<li>Water Timer: " ~ (states(validInputs.inputs.water_timer) if validInputs.inputs.water_timer != '-' else '-') ~ "</li>"
+            ~ "<li>Pause Timer: " ~ (states(validInputs.inputs.pause_timer) if validInputs.inputs.pause_timer != '-' else '-') ~ "</li>"
+            ~ "<li>Schedule Helper: " ~ (states(validInputs.inputs.schedule_helper) if validInputs.inputs.schedule_helper != '-' else '-') ~ "</li>"
+            ~ "<li>Wetter Sensor: " ~ (states(validInputs.inputs.weather_sensor) if validInputs.inputs.weather_sensor != '-' and validInputs.inputs.weather_sensor != 'none' else '-') ~ "</li>"
+            ~ "</ul>"
+            }}
+      - action: notify.persistent_notification
+        data:
+          title: 'Debug TgSprinkler'
+          message: >-
+            {{- debugMsg -}}
+  
+  - variables:
+      delayForDeviceTest: 00:00:01
+      notifications: {"hoterror":[], "error":[], "msg":[]}
+      validationErrors: >-
+        {%- if validInputs.error is defined and validInputs.error | length > 0 -%}
+          {{- validInputs.error -}}
+        {%- else -%}
+          {{- [] -}}
+        {%- endif -%}
+      isallidle: >-
+        {%- if validInputs.inputs.water_timer is defined and validInputs.inputs.pause_timer is defined -%}
+          {{- is_state(validInputs.inputs.water_timer, 'idle') and is_state(validInputs.inputs.pause_timer, 'idle') -}}
+        {%- else -%}
+          {{- false -}}
+        {%- endif -%}
+      israining: >-
+        {%- if validInputs.inputs.weather_sensor is defined and validInputs.inputs.weather_sensor != '-' and validInputs.inputs.weather_sensor != 'none' -%}
+          {%- set rain_conditions = ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy'] -%}
+          {%- set weather_state = states(validInputs.inputs.weather_sensor) -%}
+          {%- if weather_state is not none and weather_state.attributes is defined -%}
+            {{- weather_state.attributes.forecast[0].condition in rain_conditions -}}
+          {%- else -%}
+            {{- false -}}
+          {%- endif -%}
+        {%- else -%}
+          {{- false -}}
+        {%- endif -%}
+      isschedule: >-
+        {%- if validInputs.inputs.schedule_helper is defined -%}
+          {{- is_state(validInputs.inputs.schedule_helper, 'on') -}}
+        {%- else -%}
+          {{- false -}}
+        {%- endif -%}
+      istoodry: >-
+        {%- if validInputs.inputs.moisture_sensors | length > 0 -%}
+          {{- (validInputs.inputs.calculatedMoistureLimit | string | float(default=0)) < (validInputs.inputs.moisture_limit | string | float(default=0)) -}}
+        {%- else -%}
+          {{- true -}}
+        {%- endif -%}
+      mainswitchoff: >-
+        {%- if validInputs.inputs.main_switch is defined -%}
+          {{- is_state(validInputs.inputs.main_switch, 'off') -}}
+        {%- else -%}
+          {{- false -}}
+        {%- endif -%}
+      manualmodeoff: >-
+        {%- if validInputs.inputs.manual_mode_helper is defined -%}
+          {{- is_state(validInputs.inputs.manual_mode_helper, 'off') -}}
+        {%- else -%}
+          {{- true -}}
+        {%- endif -%}
+      manual_mode_domain: >-
+        {%- if validInputs.inputs.manual_mode_helper is defined -%}
+          {{- validInputs.inputs.manual_mode_helper.split('.')[0] -}}
+        {%- else -%}
+          {{- 'switch' -}}
+        {%- endif -%}
+  
+  - if:
+      - condition: template
+        value_template: "{{ validInputs.inputs.moisture_calculation_result_helper is defined }}"
+    then:
+      - service: input_number.set_value
+        data:
+          entity_id: "{{ validInputs.inputs.moisture_calculation_result_helper }}"
+          value: "{{ validInputs.inputs.calculatedMoistureLimit }}"
+  
+  
+  - choose:
+      # Wenn eine der Abschaltbedingungen erfüllt ist: Schedule inaktiv ODER Regen erkannt ODER Feuchtigkeit > Limit+Buffer ODER Fehler aufgetreten ODER Hauptschalter aus
+      - conditions:
+          - condition: or
+            conditions:
+              - condition: template
+                value_template: '{{ manualmodeoff and not isschedule }}'
+              - condition: template
+                value_template: '{{ manualmodeoff and israining }}'
+              - condition: template
+                value_template: '{{ manualmodeoff and not istoodry }}'
+              - condition: template
+                value_template: '{{ validationErrors | length > 0 }}'
+              - condition: template
+                value_template: '{{ mainswitchoff }}'
+        sequence:
+          - variables:
+              shutdown_reasons: >-
+                {%- set reasons = [] -%}
+                {%- if not isschedule -%}
+                  {%- set reasons = reasons + ["Schedule inaktiv"] -%}
+                {%- endif -%}
+                {%- if israining -%}
+                  {%- set reasons = reasons + ["Regen erkannt"] -%}
+                {%- endif -%}
+                {%- if not istoodry -%}
+                  {%- set reasons = reasons + ["Feuchtigkeit über Limit+Buffer"] -%}
+                {%- endif -%}
+                {%- if validationErrors | length > 0 -%}
+                  {%- set reasons = reasons + ["Validierungsfehler vorhanden"] -%}
+                {%- endif -%}
+                {%- if mainswitchoff -%}
+                  {%- set reasons = reasons + ["Hauptschalter aus"] -%}
+                {%- endif -%}
+                {{- reasons -}}
+              notifications: >-
+                {%- set hoterror = notifications.hoterror -%}
+                {%- set error = notifications.error + validInputs.error -%}
+                {%- set msg = notifications.msg + [{"Sicherheitsabschaltung":shutdown_reasons}] -%}
+                {%- set devicestates = [] -%}
+                {%- set devicestates = devicestates + ["Zeitplan: " ~ ("aktiv" if isschedule else "inaktiv")] -%}
+                {%- set devicestates = devicestates + ["Wetter: " ~ ("Regen" if israining else "kein Regen")] -%}
+                {%- set devicestates = devicestates + ["Feuchtigkeit: " ~ ("unter Limit" if istoodry else "über Limit")] -%}
+                {%- set devicestates = devicestates + ["Hauptschalter: " ~ ("ein" if not mainswitchoff else "aus")] -%}
+                {%- set msg = msg + [{"Gerätestatus":devicestates}] -%}
+                {%- set notifications = {"hoterror":hoterror, "error":error, "msg":msg} -%}
+                {{- notifications -}}
+  
+          # Bewässerung ausschalten
+          - service: switch.turn_off
+            target:
+              entity_id: '{{ validInputs.inputs.irrigation_switches }}'
+          # Timer stoppen (wasser und pause)
+          - variables:
+              active_timers: >-
+                {% set timers = [] %}
+                {% if is_state(validInputs.inputs.water_timer, 'active') %}
+                  {% set timers = timers + [validInputs.inputs.water_timer] %}
+                {% endif %}
+                {% if is_state(validInputs.inputs.pause_timer, 'active') %}
+                  {% set timers = timers + [validInputs.inputs.pause_timer] %}
+                {% endif %}
+                {{ timers }}
+          - if:
+              - condition: template
+                value_template: "{{ active_timers | length > 0 }}"
+            then:
+              - service: timer.cancel
+                target:
+                  entity_id: '{{ active_timers }}'
+          - delay: '{{ delayForDeviceTest }}'
+  
+          # Manuellen Schalter ausschalten
+          - if:
+              - condition: template
+                value_template: "{{ manual_mode_domain == 'input_boolean' }}"
+            then:
+              - service: input_boolean.turn_off
+                target:
+                  entity_id: '{{ validInputs.inputs.manual_mode_helper }}'
+            else:
+              - service: switch.turn_off
+                target:
+                  entity_id: '{{ validInputs.inputs.manual_mode_helper }}'
+  
+          - variables:
+              switchesOffFailed: >-
+                {% set failed_switches = [] %}
+                {% for switch in validInputs.inputs.irrigation_switches %}
+                  {% if not is_state(switch, 'off') %}
+                    {% set failed_switches = failed_switches + [switch] %}
+                  {% endif %}
+                {% endfor %}
+                {{ failed_switches }}
+              notifications: >-
+                {%- set hoterror = notifications.hoterror -%}
+                {%- set error = notifications.error -%}
+                {%- set msg = notifications.msg -%}
+                {%- if switchesOffFailed | length > 0 -%}
+                  {%- set hoterror = hoterror + [{"Fehler bei Bewässerungsdeaktivierung":switchesOffFailed}] -%}
+                {%- endif -%}
+                {%- set devicestates = [] -%}
+                {% for switch in validInputs.inputs.irrigation_switches %}
+                  {%- set devicestates = devicestates + [switch ~ ": " ~ ("eingeschaltet" if is_state(switch, 'on') else "ausgeschaltet")] -%}
+                {% endfor %}
+                {%- set devicestates = devicestates + ["Pause Timer: " ~ ("aktiv" if is_state(validInputs.inputs.pause_timer, 'active') else "inaktiv")] -%}
+                {%- set devicestates = devicestates + ["Water Timer: " ~ ("aktiv" if is_state(validInputs.inputs.water_timer, 'active') else "inaktiv")] -%}
+                {%- set msg = msg + [{"Gerätestatus":devicestates}] -%}
+                {%- set notifications = {"hoterror":hoterror, "error":error, "msg":msg} -%}
+                {{- notifications -}}
+          # Final Debug Block
+          - if:
+              - condition: template
+                value_template: '{{ validInputs.inputs.debug_mode }}'
+            then:
+              - variables:
+                  debugMsg: >-
+                    {# ___________________________________________________ #}
+                    {%- macro dumpToHTML(val, filter=[], maxSteps=3, testJson=false, details=0, thisStep=0) -%}
+                      {%- set patternMap = '^[\s]*\{[\S\s]*\}[\s]*$' -%}
+                      {%- set patternList = '^[\s]*\[[\S\s]*\][\s]*$' -%}
+                    
+                      {%- set dump = namespace() -%} 
+                      {%- set dump.tmp="" -%}
+                      {%- set dump.val=val -%}
+                      {%- set dump.valType=none -%}
+                      {%- set myFilter=filter -%}
+                      {%- set filter=[] -%}
+                      {%- set thisStep=thisStep + 1 -%}
+                      
+                      {%- if thisStep > maxSteps -%}
+                        {%- if dump.val is list or dump.val is mapping -%} {%- set dump.tmp = dump.val|to_json -%} {%- else -%} {%- set dump.tmp = dump.val -%} {%- endif -%}
+                        {%- set dump.valType="json" -%}
+                      {%- else -%}
+                        {%- if dump.val is string and testJson == true and ( dump.val is search(patternMap) or dump.val is search(patternList) )-%}
+                          {%- set dump.val=dump.val|replace("'", '"')|from_json -%}
+                        {%- endif -%}
+                        {%- if dump.val is list -%}
+                          {%- set dump.valType="list" -%}
+                          {%- set dump.tmp = dump.tmp ~ "<ul>" -%} 
+                          {%- for item in dump.val -%}
+                            {%- set myDump = dumpToHTML(item, filter, maxSteps, testJson, details, thisStep)|from_json -%}
+                            {%- set dump.tmp = dump.tmp ~ "<li>" ~ myDump[1] ~ "</li>" -%}
+                          {%- endfor -%}
+                          {%- set dump.tmp = dump.tmp ~ "</ul>" -%} 
+                        {%- elif dump.val is mapping -%}
+                          {%- set dump.valType="dict" -%}
+                          {%- set dump.tmp = dump.tmp ~ "<ul>" -%} 
+                          {%- for name, item in dump.val.items() -%}
+                            {%- if thisStep > 1 or name not in myFilter -%}
+                              {%- set preTxt = "<li>" -%}
+                              {%- set postTxt = "</li>" -%}
+                              {%- set nameTxtStart = "<b>" -%}
+                              {%- set NameTxtEnd = "</b>" -%}
+                              {%- set myDump = dumpToHTML(item, filter, maxSteps, testJson, details, thisStep)|from_json -%}
+                              {%- if details == thisStep and myDump[0] == "dict" -%}
+                                {%- set preTxt = preTxt ~ "<details>" -%}
+                                {%- set postTxt = "</details>" ~ postTxt -%}
+                                {%- set nameTxtStart = "<summary>" ~ nameTxtStart -%}
+                                {%- set NameTxtEnd = NameTxtEnd ~ "</summary>" -%}
+                              {%- endif -%}
+                    
+                              {%- set dump.tmp = dump.tmp ~ preTxt ~ nameTxtStart ~ name ~ ": " ~ NameTxtEnd ~ myDump[1] ~ postTxt -%}
+                            {%- endif -%}
+                          {%- endfor -%}
+                          {%- set dump.tmp = dump.tmp ~ "</ul>" -%} 
+                        {%- elif dump.val is string or dump.val is number -%}
+                          {%- set dump.tmp = dump.tmp ~ " " ~ dump.val ~ "" -%} 
+                          {%- set dump.valType="string" -%}
+                        {%- endif -%}
+                      {%- endif -%}
+                    
+                      {%- if thisStep == 1 -%}
+                        {{- dump.tmp -}}
+                      {%- else -%}
+                        {{- [dump.valType, dump.tmp]|to_json -}}
+                      {%- endif -%}
+                    {%- endmacro -%}
+                    {{ dumpToHTML(notifications.msg, [], 5, false, 3) }}
+              - action: notify.persistent_notification
+                data:
+                  title: 'Debug TgSprinkler'
+                  message: >-
+                    {{- debugMsg -}}
+  
+  
+      # Wenn der water_timer abläuft
+      - conditions:
+          - condition: template
+            value_template: >-
+              {%- if triggerdevice is defined and triggerdevice.id is defined -%}
+                {{- triggerdevice.id == validInputs.inputs.water_timer and is_state(validInputs.inputs.water_timer, 'idle') and manualmodeoff -}}
+              {%- else -%}
+                {{- false -}}
+              {%- endif -%}
+        sequence:
+          - service: switch.turn_off
+            target:
+              entity_id: '{{ validInputs.inputs.irrigation_switches }}'
+          - service: timer.start
+            data:
+              duration: '{{ validInputs.inputs.pause_timer_duration }}'
+            target:
+              entity_id: '{{ validInputs.inputs.pause_timer }}'
+          - delay: '{{ delayForDeviceTest }}'
+          - variables:
+              switchesOffFailed: >-
+                {% set failed_switches = [] %}
+                {% for switch in validInputs.inputs.irrigation_switches %}
+                  {% if not is_state(switch, 'off') %}
+                    {% set failed_switches = failed_switches + [switch] %}
+                  {% endif %}
+                {% endfor %}
+                {{ failed_switches }}
+              notifications: >-
+                {%- set hoterror = notifications.hoterror -%}
+                {%- set error = notifications.error -%}
+                {%- set msg = notifications.msg + [{"Abschaltung nach Timerablauf": validInputs.inputs.water_timer}] -%}
+                {%- if switchesOffFailed | length > 0 -%}
+                  {%- set hoterror = hoterror + [{"Fehler bei Bewässerungsdeaktivierung":switchesOffFailed}] -%}
+                {%- endif -%}
+                {%- set devicestates = [] -%}
+                {% for switch in validInputs.inputs.irrigation_switches %}
+                  {%- set devicestates = devicestates + [switch ~ ": " ~ ("eingeschaltet" if is_state(switch, 'on') else "ausgeschaltet")] -%}
+                {% endfor %}
+                {%- set devicestates = devicestates + ["Pause Timer: " ~ ("aktiv" if is_state(validInputs.inputs.pause_timer, 'active') else "inaktiv")] -%}
+                {%- set devicestates = devicestates + ["Water Timer: " ~ ("aktiv" if is_state(validInputs.inputs.water_timer, 'active') else "inaktiv")] -%}
+                {%- set msg = msg + [{"Gerätestatus":devicestates}] -%}
+                {%- set notifications = {"hoterror":hoterror, "error":error, "msg":msg} -%}
+                {{- notifications -}}
+          # Final Debug Block
+          - if:
+              - condition: template
+                value_template: '{{ validInputs.inputs.debug_mode }}'
+            then:
+              - variables:
+                  debugMsg: >-
+                    {# ___________________________________________________ #}
+                    {%- macro dumpToHTML(val, filter=[], maxSteps=3, testJson=false, details=0, thisStep=0) -%}
+                      {%- set patternMap = '^[\s]*\{[\S\s]*\}[\s]*$' -%}
+                      {%- set patternList = '^[\s]*\[[\S\s]*\][\s]*$' -%}
+                    
+                      {%- set dump = namespace() -%} 
+                      {%- set dump.tmp="" -%}
+                      {%- set dump.val=val -%}
+                      {%- set dump.valType=none -%}
+                      {%- set myFilter=filter -%}
+                      {%- set filter=[] -%}
+                      {%- set thisStep=thisStep + 1 -%}
+                      
+                      {%- if thisStep > maxSteps -%}
+                        {%- if dump.val is list or dump.val is mapping -%} {%- set dump.tmp = dump.val|to_json -%} {%- else -%} {%- set dump.tmp = dump.val -%} {%- endif -%}
+                        {%- set dump.valType="json" -%}
+                      {%- else -%}
+                        {%- if dump.val is string and testJson == true and ( dump.val is search(patternMap) or dump.val is search(patternList) )-%}
+                          {%- set dump.val=dump.val|replace("'", '"')|from_json -%}
+                        {%- endif -%}
+                        {%- if dump.val is list -%}
+                          {%- set dump.valType="list" -%}
+                          {%- set dump.tmp = dump.tmp ~ "<ul>" -%} 
+                          {%- for item in dump.val -%}
+                            {%- set myDump = dumpToHTML(item, filter, maxSteps, testJson, details, thisStep)|from_json -%}
+                            {%- set dump.tmp = dump.tmp ~ "<li>" ~ myDump[1] ~ "</li>" -%}
+                          {%- endfor -%}
+                          {%- set dump.tmp = dump.tmp ~ "</ul>" -%} 
+                        {%- elif dump.val is mapping -%}
+                          {%- set dump.valType="dict" -%}
+                          {%- set dump.tmp = dump.tmp ~ "<ul>" -%} 
+                          {%- for name, item in dump.val.items() -%}
+                            {%- if thisStep > 1 or name not in myFilter -%}
+                              {%- set preTxt = "<li>" -%}
+                              {%- set postTxt = "</li>" -%}
+                              {%- set nameTxtStart = "<b>" -%}
+                              {%- set NameTxtEnd = "</b>" -%}
+                              {%- set myDump = dumpToHTML(item, filter, maxSteps, testJson, details, thisStep)|from_json -%}
+                              {%- if details == thisStep and myDump[0] == "dict" -%}
+                                {%- set preTxt = preTxt ~ "<details>" -%}
+                                {%- set postTxt = "</details>" ~ postTxt -%}
+                                {%- set nameTxtStart = "<summary>" ~ nameTxtStart -%}
+                                {%- set NameTxtEnd = NameTxtEnd ~ "</summary>" -%}
+                              {%- endif -%}
+                    
+                              {%- set dump.tmp = dump.tmp ~ preTxt ~ nameTxtStart ~ name ~ ": " ~ NameTxtEnd ~ myDump[1] ~ postTxt -%}
+                            {%- endif -%}
+                          {%- endfor -%}
+                          {%- set dump.tmp = dump.tmp ~ "</ul>" -%} 
+                        {%- elif dump.val is string or dump.val is number -%}
+                          {%- set dump.tmp = dump.tmp ~ " " ~ dump.val ~ "" -%} 
+                          {%- set dump.valType="string" -%}
+                        {%- endif -%}
+                      {%- endif -%}
+                    
+                      {%- if thisStep == 1 -%}
+                        {{- dump.tmp -}}
+                      {%- else -%}
+                        {{- [dump.valType, dump.tmp]|to_json -}}
+                      {%- endif -%}
+                    {%- endmacro -%}
+                    {{ dumpToHTML(notifications.msg, [], 5, false, 3) }}
+              - action: notify.persistent_notification
+                data:
+                  title: 'Debug TgSprinkler'
+                  message: >-
+                    {{- debugMsg -}}
+  
+  
+      # Wenn der water_timer abläuft und manueller Modus aktiv ist
+      - conditions:
+          - condition: template
+            value_template: >-
+              {%- if triggerdevice is defined and triggerdevice.id is defined -%}
+                {{- triggerdevice.id == validInputs.inputs.water_timer and is_state(validInputs.inputs.water_timer, 'idle') and not manualmodeoff -}}
+              {%- else -%}
+                {{- false -}}
+              {%- endif -%}
+        sequence:
+          - if:
+              - condition: template
+                value_template: "{{ manual_mode_domain == 'input_boolean' }}"
+            then:
+              - service: input_boolean.turn_off
+                target:
+                  entity_id: '{{ validInputs.inputs.manual_mode_helper }}'
+            else:
+              - service: switch.turn_off
+                target:
+                  entity_id: '{{ validInputs.inputs.manual_mode_helper }}'
+  
+          - variables:
+              notifications: >-
+                {%- set hoterror = notifications.hoterror -%}
+                {%- set error = notifications.error -%}
+                {%- set msg = notifications.msg + [{"Manueller Modus beendet": ""}] -%}
+                {%- set devicestates = [] -%}
+                {% for switch in validInputs.inputs.irrigation_switches %}
+                  {%- set devicestates = devicestates + [switch ~ ": " ~ ("eingeschaltet" if is_state(switch, 'on') else "ausgeschaltet")] -%}
+                {% endfor %}
+                {%- set devicestates = devicestates + ["Pause Timer: " ~ ("aktiv" if is_state(validInputs.inputs.pause_timer, 'active') else "inaktiv")] -%}
+                {%- set devicestates = devicestates + ["Water Timer: " ~ ("aktiv" if is_state(validInputs.inputs.water_timer, 'active') else "inaktiv")] -%}
+                {%- set msg = msg + [{"Gerätestatus":devicestates}] -%}
+                {%- set notifications = {"hoterror":hoterror, "error":error, "msg":msg} -%}
+                {{- notifications -}}
+          # Final Debug Block
+          - if:
+              - condition: template
+                value_template: '{{ validInputs.inputs.debug_mode }}'
+            then:
+              - variables:
+                  debugMsg: >-
+                    {# ___________________________________________________ #}
+                    {%- macro dumpToHTML(val, filter=[], maxSteps=3, testJson=false, details=0, thisStep=0) -%}
+                      {%- set patternMap = '^[\s]*\{[\S\s]*\}[\s]*$' -%}
+                      {%- set patternList = '^[\s]*\[[\S\s]*\][\s]*$' -%}
+                    
+                      {%- set dump = namespace() -%} 
+                      {%- set dump.tmp="" -%}
+                      {%- set dump.val=val -%}
+                      {%- set dump.valType=none -%}
+                      {%- set myFilter=filter -%}
+                      {%- set filter=[] -%}
+                      {%- set thisStep=thisStep + 1 -%}
+                      
+                      {%- if thisStep > maxSteps -%}
+                        {%- if dump.val is list or dump.val is mapping -%} {%- set dump.tmp = dump.val|to_json -%} {%- else -%} {%- set dump.tmp = dump.val -%} {%- endif -%}
+                        {%- set dump.valType="json" -%}
+                      {%- else -%}
+                        {%- if dump.val is string and testJson == true and ( dump.val is search(patternMap) or dump.val is search(patternList) )-%}
+                          {%- set dump.val=dump.val|replace("'", '"')|from_json -%}
+                        {%- endif -%}
+                        {%- if dump.val is list -%}
+                          {%- set dump.valType="list" -%}
+                          {%- set dump.tmp = dump.tmp ~ "<ul>" -%} 
+                          {%- for item in dump.val -%}
+                            {%- set myDump = dumpToHTML(item, filter, maxSteps, testJson, details, thisStep)|from_json -%}
+                            {%- set dump.tmp = dump.tmp ~ "<li>" ~ myDump[1] ~ "</li>" -%}
+                          {%- endfor -%}
+                          {%- set dump.tmp = dump.tmp ~ "</ul>" -%} 
+                        {%- elif dump.val is mapping -%}
+                          {%- set dump.valType="dict" -%}
+                          {%- set dump.tmp = dump.tmp ~ "<ul>" -%} 
+                          {%- for name, item in dump.val.items() -%}
+                            {%- if thisStep > 1 or name not in myFilter -%}
+                              {%- set preTxt = "<li>" -%}
+                              {%- set postTxt = "</li>" -%}
+                              {%- set nameTxtStart = "<b>" -%}
+                              {%- set NameTxtEnd = "</b>" -%}
+                              {%- set myDump = dumpToHTML(item, filter, maxSteps, testJson, details, thisStep)|from_json -%}
+                              {%- if details == thisStep and myDump[0] == "dict" -%}
+                                {%- set preTxt = preTxt ~ "<details>" -%}
+                                {%- set postTxt = "</details>" ~ postTxt -%}
+                                {%- set nameTxtStart = "<summary>" ~ nameTxtStart -%}
+                                {%- set NameTxtEnd = NameTxtEnd ~ "</summary>" -%}
+                              {%- endif -%}
+                    
+                              {%- set dump.tmp = dump.tmp ~ preTxt ~ nameTxtStart ~ name ~ ": " ~ NameTxtEnd ~ myDump[1] ~ postTxt -%}
+                            {%- endif -%}
+                          {%- endfor -%}
+                          {%- set dump.tmp = dump.tmp ~ "</ul>" -%} 
+                        {%- elif dump.val is string or dump.val is number -%}
+                          {%- set dump.tmp = dump.tmp ~ " " ~ dump.val ~ "" -%} 
+                          {%- set dump.valType="string" -%}
+                        {%- endif -%}
+                      {%- endif -%}
+                    
+                      {%- if thisStep == 1 -%}
+                        {{- dump.tmp -}}
+                      {%- else -%}
+                        {{- [dump.valType, dump.tmp]|to_json -}}
+                      {%- endif -%}
+                    {%- endmacro -%}
+                    {{ dumpToHTML(notifications.msg, [], 5, false, 3) }}
+              - action: notify.persistent_notification
+                data:
+                  title: 'Debug TgSprinkler'
+                  message: >-
+                    {{- debugMsg -}}
+  
+  
+      # Wenn der manuelle Schalter ausgeschaltet wird
+      - conditions:
+          - condition: template
+            value_template: >-
+              {%- if triggerdevice is defined and triggerdevice.id is defined -%}
+                {{- triggerdevice.id == validInputs.inputs.manual_mode_helper and is_state(validInputs.inputs.manual_mode_helper, 'off') -}}
+              {%- else -%}
+                {{- false -}}
+              {%- endif -%}
+        sequence:
+          - service: switch.turn_off
+            target:
+              entity_id: '{{ validInputs.inputs.irrigation_switches }}'
+          - service: timer.start
+            data:
+              duration: '{{ validInputs.inputs.pause_timer_duration }}'
+            target:
+              entity_id: '{{ validInputs.inputs.pause_timer }}'
+          - if:
+              - condition: template
+                value_template: "{{ is_state(validInputs.inputs.water_timer, 'active') }}"
+            then:
+              - service: timer.start
+                data:
+                  duration: '{{ validInputs.inputs.water_duration }}'
+                target:
+                  entity_id: '{{ validInputs.inputs.water_timer }}'
+          - delay: '{{ delayForDeviceTest }}'
+          - variables:
+              switchesOffFailed: >-
+                {% set failed_switches = [] %}
+                {% for switch in validInputs.inputs.irrigation_switches %}
+                  {% if not is_state(switch, 'off') %}
+                    {% set failed_switches = failed_switches + [switch] %}
+                  {% endif %}
+                {% endfor %}
+                {{ failed_switches }}
+              notifications: >-
+                {%- set hoterror = notifications.hoterror -%}
+                {%- set error = notifications.error -%}
+                {%- set msg = notifications.msg + [{"manueller Schalter ausgeschaltet": validInputs.inputs.manual_mode_helper}] -%}
+                {%- if switchesOffFailed | length > 0 -%}
+                  {%- set hoterror = hoterror + [{"Fehler bei Bewässerungsdeaktivierung":switchesOffFailed}] -%}
+                {%- endif -%}
+                {%- set devicestates = [] -%}
+                {% for switch in validInputs.inputs.irrigation_switches %}
+                  {%- set devicestates = devicestates + [switch ~ ": " ~ ("eingeschaltet" if is_state(switch, 'on') else "ausgeschaltet")] -%}
+                {% endfor %}
+                {%- set devicestates = devicestates + ["Pause Timer: " ~ ("aktiv" if is_state(validInputs.inputs.pause_timer, 'active') else "inaktiv")] -%}
+                {%- set devicestates = devicestates + ["Water Timer: " ~ ("aktiv" if is_state(validInputs.inputs.water_timer, 'active') else "inaktiv")] -%}
+                {%- set msg = msg + [{"Gerätestatus":devicestates}] -%}
+                {%- set notifications = {"hoterror":hoterror, "error":error, "msg":msg} -%}
+                {{- notifications -}}
+          # Final Debug Block
+          - if:
+              - condition: template
+                value_template: '{{ validInputs.inputs.debug_mode }}'
+            then:
+              - variables:
+                  debugMsg: >-
+                    {# ___________________________________________________ #}
+                    {%- macro dumpToHTML(val, filter=[], maxSteps=3, testJson=false, details=0, thisStep=0) -%}
+                      {%- set patternMap = '^[\s]*\{[\S\s]*\}[\s]*$' -%}
+                      {%- set patternList = '^[\s]*\[[\S\s]*\][\s]*$' -%}
+                    
+                      {%- set dump = namespace() -%} 
+                      {%- set dump.tmp="" -%}
+                      {%- set dump.val=val -%}
+                      {%- set dump.valType=none -%}
+                      {%- set myFilter=filter -%}
+                      {%- set filter=[] -%}
+                      {%- set thisStep=thisStep + 1 -%}
+                      
+                      {%- if thisStep > maxSteps -%}
+                        {%- if dump.val is list or dump.val is mapping -%} {%- set dump.tmp = dump.val|to_json -%} {%- else -%} {%- set dump.tmp = dump.val -%} {%- endif -%}
+                        {%- set dump.valType="json" -%}
+                      {%- else -%}
+                        {%- if dump.val is string and testJson == true and ( dump.val is search(patternMap) or dump.val is search(patternList) )-%}
+                          {%- set dump.val=dump.val|replace("'", '"')|from_json -%}
+                        {%- endif -%}
+                        {%- if dump.val is list -%}
+                          {%- set dump.valType="list" -%}
+                          {%- set dump.tmp = dump.tmp ~ "<ul>" -%} 
+                          {%- for item in dump.val -%}
+                            {%- set myDump = dumpToHTML(item, filter, maxSteps, testJson, details, thisStep)|from_json -%}
+                            {%- set dump.tmp = dump.tmp ~ "<li>" ~ myDump[1] ~ "</li>" -%}
+                          {%- endfor -%}
+                          {%- set dump.tmp = dump.tmp ~ "</ul>" -%} 
+                        {%- elif dump.val is mapping -%}
+                          {%- set dump.valType="dict" -%}
+                          {%- set dump.tmp = dump.tmp ~ "<ul>" -%} 
+                          {%- for name, item in dump.val.items() -%}
+                            {%- if thisStep > 1 or name not in myFilter -%}
+                              {%- set preTxt = "<li>" -%}
+                              {%- set postTxt = "</li>" -%}
+                              {%- set nameTxtStart = "<b>" -%}
+                              {%- set NameTxtEnd = "</b>" -%}
+                              {%- set myDump = dumpToHTML(item, filter, maxSteps, testJson, details, thisStep)|from_json -%}
+                              {%- if details == thisStep and myDump[0] == "dict" -%}
+                                {%- set preTxt = preTxt ~ "<details>" -%}
+                                {%- set postTxt = "</details>" ~ postTxt -%}
+                                {%- set nameTxtStart = "<summary>" ~ nameTxtStart -%}
+                                {%- set NameTxtEnd = NameTxtEnd ~ "</summary>" -%}
+                              {%- endif -%}
+                    
+                              {%- set dump.tmp = dump.tmp ~ preTxt ~ nameTxtStart ~ name ~ ": " ~ NameTxtEnd ~ myDump[1] ~ postTxt -%}
+                            {%- endif -%}
+                          {%- endfor -%}
+                          {%- set dump.tmp = dump.tmp ~ "</ul>" -%} 
+                        {%- elif dump.val is string or dump.val is number -%}
+                          {%- set dump.tmp = dump.tmp ~ " " ~ dump.val ~ "" -%} 
+                          {%- set dump.valType="string" -%}
+                        {%- endif -%}
+                      {%- endif -%}
+                    
+                      {%- if thisStep == 1 -%}
+                        {{- dump.tmp -}}
+                      {%- else -%}
+                        {{- [dump.valType, dump.tmp]|to_json -}}
+                      {%- endif -%}
+                    {%- endmacro -%}
+                    {{ dumpToHTML(notifications.msg, [], 5, false, 3) }}
+              - action: notify.persistent_notification
+                data:
+                  title: 'Debug TgSprinkler'
+                  message: >-
+                    {{- debugMsg -}}
+  
+  
+      # Wenn der manuelle Schalter eingeschaltet wird
+      - conditions:
+          - condition: template
+            value_template: >-
+              {%- if triggerdevice is defined and triggerdevice.id is defined -%}
+                {{- triggerdevice.id == validInputs.inputs.manual_mode_helper and is_state(validInputs.inputs.manual_mode_helper, 'on') -}}
+              {%- else -%}
+                {{- false -}}
+              {%- endif -%}
+        sequence:
+          # Pause Timer stoppen falls aktiv
+          - if:
+              - condition: template
+                value_template: "{{ is_state(validInputs.inputs.pause_timer, 'active') }}"
+            then:
+              - service: timer.cancel
+                target:
+                  entity_id: '{{ validInputs.inputs.pause_timer }}'
+          # Water Timer mit manueller Dauer starten
+          - service: timer.start
+            target:
+              entity_id: '{{ validInputs.inputs.water_timer }}'
+            data:
+              duration: '{{ validInputs.inputs.manual_duration }}'
+          - service: switch.turn_on
+            target:
+              entity_id: '{{ validInputs.inputs.irrigation_switches }}'
+          - variables:
+              notifications: >-
+                {%- set hoterror = notifications.hoterror -%}
+                {%- set error = notifications.error -%}
+                {%- set msg = notifications.msg + [{"manueller Modus aktiviert": validInputs.inputs.manual_mode_helper}] -%}
+                {%- set devicestates = [] -%}
+                {% for switch in validInputs.inputs.irrigation_switches %}
+                  {%- set devicestates = devicestates + [switch ~ ": " ~ ("eingeschaltet" if is_state(switch, 'on') else "ausgeschaltet")] -%}
+                {% endfor %}
+                {%- set devicestates = devicestates + ["Pause Timer: " ~ ("aktiv" if is_state(validInputs.inputs.pause_timer, 'active') else "inaktiv")] -%}
+                {%- set devicestates = devicestates + ["Water Timer: " ~ ("aktiv" if is_state(validInputs.inputs.water_timer, 'active') else "inaktiv")] -%}
+                {%- set msg = msg + [{"Gerätestatus":devicestates}] -%}
+                {%- set notifications = {"hoterror":hoterror, "error":error, "msg":msg} -%}
+                {{- notifications -}}
+          # Final Debug Block
+          - if:
+              - condition: template
+                value_template: '{{ validInputs.inputs.debug_mode }}'
+            then:
+              - variables:
+                  debugMsg: >-
+                    {# ___________________________________________________ #}
+                    {%- macro dumpToHTML(val, filter=[], maxSteps=3, testJson=false, details=0, thisStep=0) -%}
+                      {%- set patternMap = '^[\s]*\{[\S\s]*\}[\s]*$' -%}
+                      {%- set patternList = '^[\s]*\[[\S\s]*\][\s]*$' -%}
+                    
+                      {%- set dump = namespace() -%} 
+                      {%- set dump.tmp="" -%}
+                      {%- set dump.val=val -%}
+                      {%- set dump.valType=none -%}
+                      {%- set myFilter=filter -%}
+                      {%- set filter=[] -%}
+                      {%- set thisStep=thisStep + 1 -%}
+                      
+                      {%- if thisStep > maxSteps -%}
+                        {%- if dump.val is list or dump.val is mapping -%} {%- set dump.tmp = dump.val|to_json -%} {%- else -%} {%- set dump.tmp = dump.val -%} {%- endif -%}
+                        {%- set dump.valType="json" -%}
+                      {%- else -%}
+                        {%- if dump.val is string and testJson == true and ( dump.val is search(patternMap) or dump.val is search(patternList) )-%}
+                          {%- set dump.val=dump.val|replace("'", '"')|from_json -%}
+                        {%- endif -%}
+                        {%- if dump.val is list -%}
+                          {%- set dump.valType="list" -%}
+                          {%- set dump.tmp = dump.tmp ~ "<ul>" -%} 
+                          {%- for item in dump.val -%}
+                            {%- set myDump = dumpToHTML(item, filter, maxSteps, testJson, details, thisStep)|from_json -%}
+                            {%- set dump.tmp = dump.tmp ~ "<li>" ~ myDump[1] ~ "</li>" -%}
+                          {%- endfor -%}
+                          {%- set dump.tmp = dump.tmp ~ "</ul>" -%} 
+                        {%- elif dump.val is mapping -%}
+                          {%- set dump.valType="dict" -%}
+                          {%- set dump.tmp = dump.tmp ~ "<ul>" -%} 
+                          {%- for name, item in dump.val.items() -%}
+                            {%- if thisStep > 1 or name not in myFilter -%}
+                              {%- set preTxt = "<li>" -%}
+                              {%- set postTxt = "</li>" -%}
+                              {%- set nameTxtStart = "<b>" -%}
+                              {%- set NameTxtEnd = "</b>" -%}
+                              {%- set myDump = dumpToHTML(item, filter, maxSteps, testJson, details, thisStep)|from_json -%}
+                              {%- if details == thisStep and myDump[0] == "dict" -%}
+                                {%- set preTxt = preTxt ~ "<details>" -%}
+                                {%- set postTxt = "</details>" ~ postTxt -%}
+                                {%- set nameTxtStart = "<summary>" ~ nameTxtStart -%}
+                                {%- set NameTxtEnd = NameTxtEnd ~ "</summary>" -%}
+                              {%- endif -%}
+                    
+                              {%- set dump.tmp = dump.tmp ~ preTxt ~ nameTxtStart ~ name ~ ": " ~ NameTxtEnd ~ myDump[1] ~ postTxt -%}
+                            {%- endif -%}
+                          {%- endfor -%}
+                          {%- set dump.tmp = dump.tmp ~ "</ul>" -%} 
+                        {%- elif dump.val is string or dump.val is number -%}
+                          {%- set dump.tmp = dump.tmp ~ " " ~ dump.val ~ "" -%} 
+                          {%- set dump.valType="string" -%}
+                        {%- endif -%}
+                      {%- endif -%}
+                    
+                      {%- if thisStep == 1 -%}
+                        {{- dump.tmp -}}
+                      {%- else -%}
+                        {{- [dump.valType, dump.tmp]|to_json -}}
+                      {%- endif -%}
+                    {%- endmacro -%}
+                    {{ dumpToHTML(notifications.msg, [], 5, false, 3) }}
+              - action: notify.persistent_notification
+                data:
+                  title: 'Debug TgSprinkler'
+                  message: >-
+                    {{- debugMsg -}}
+  
+  
+      # Wenn alle Bedingungen gleichzeitig erfüllt sind: Schedule aktiv, beide Timer idle, kein Regen, Feuchtigkeit < Limit
+      - conditions:
+          - condition: and
+            conditions:
+              - condition: template
+                value_template: '{{ isschedule }}'
+              - condition: template
+                value_template: '{{ isallidle }}'
+              - condition: template
+                value_template: '{{ not israining }}'
+              - condition: template
+                value_template: '{{ istoodry }}'
+        sequence:
+          - service: switch.turn_on
+            target:
+              entity_id: '{{ validInputs.inputs.irrigation_switches }}'
+          - service: timer.start
+            data:
+              duration: '{{ validInputs.inputs.water_timer_duration }}'
+            target:
+              entity_id: '{{ validInputs.inputs.water_timer }}'
+          - variables:
+              notifications: >-
+                {%- set hoterror = notifications.hoterror -%}
+                {%- set error = notifications.error -%}
+                {%- set msg = notifications.msg + [{"Bewässerung aktiviert": validInputs.inputs.irrigation_switches}] -%}
+                {%- set devicestates = [] -%}
+                {% for switch in validInputs.inputs.irrigation_switches %}
+                  {%- set devicestates = devicestates + [switch ~ ": " ~ ("eingeschaltet" if is_state(switch, 'on') else "ausgeschaltet")] -%}
+                {% endfor %}
+                {%- set devicestates = devicestates + ["Pause Timer: " ~ ("aktiv" if is_state(validInputs.inputs.pause_timer, 'active') else "inaktiv")] -%}
+                {%- set devicestates = devicestates + ["Water Timer: " ~ ("aktiv" if is_state(validInputs.inputs.water_timer, 'active') else "inaktiv")] -%}
+                {%- set msg = msg + [{"Gerätestatus":devicestates}] -%}
+                {%- set notifications = {"hoterror":hoterror, "error":error, "msg":msg} -%}
+                {{- notifications -}}
+          # Final Debug Block
+          - if:
+              - condition: template
+                value_template: '{{ validInputs.inputs.debug_mode }}'
+            then:
+              - variables:
+                  debugMsg: >-
+                    {# ___________________________________________________ #}
+                    {%- macro dumpToHTML(val, filter=[], maxSteps=3, testJson=false, details=0, thisStep=0) -%}
+                      {%- set patternMap = '^[\s]*\{[\S\s]*\}[\s]*$' -%}
+                      {%- set patternList = '^[\s]*\[[\S\s]*\][\s]*$' -%}
+                    
+                      {%- set dump = namespace() -%} 
+                      {%- set dump.tmp="" -%}
+                      {%- set dump.val=val -%}
+                      {%- set dump.valType=none -%}
+                      {%- set myFilter=filter -%}
+                      {%- set filter=[] -%}
+                      {%- set thisStep=thisStep + 1 -%}
+                      
+                      {%- if thisStep > maxSteps -%}
+                        {%- if dump.val is list or dump.val is mapping -%} {%- set dump.tmp = dump.val|to_json -%} {%- else -%} {%- set dump.tmp = dump.val -%} {%- endif -%}
+                        {%- set dump.valType="json" -%}
+                      {%- else -%}
+                        {%- if dump.val is string and testJson == true and ( dump.val is search(patternMap) or dump.val is search(patternList) )-%}
+                          {%- set dump.val=dump.val|replace("'", '"')|from_json -%}
+                        {%- endif -%}
+                        {%- if dump.val is list -%}
+                          {%- set dump.valType="list" -%}
+                          {%- set dump.tmp = dump.tmp ~ "<ul>" -%} 
+                          {%- for item in dump.val -%}
+                            {%- set myDump = dumpToHTML(item, filter, maxSteps, testJson, details, thisStep)|from_json -%}
+                            {%- set dump.tmp = dump.tmp ~ "<li>" ~ myDump[1] ~ "</li>" -%}
+                          {%- endfor -%}
+                          {%- set dump.tmp = dump.tmp ~ "</ul>" -%} 
+                        {%- elif dump.val is mapping -%}
+                          {%- set dump.valType="dict" -%}
+                          {%- set dump.tmp = dump.tmp ~ "<ul>" -%} 
+                          {%- for name, item in dump.val.items() -%}
+                            {%- if thisStep > 1 or name not in myFilter -%}
+                              {%- set preTxt = "<li>" -%}
+                              {%- set postTxt = "</li>" -%}
+                              {%- set nameTxtStart = "<b>" -%}
+                              {%- set NameTxtEnd = "</b>" -%}
+                              {%- set myDump = dumpToHTML(item, filter, maxSteps, testJson, details, thisStep)|from_json -%}
+                              {%- if details == thisStep and myDump[0] == "dict" -%}
+                                {%- set preTxt = preTxt ~ "<details>" -%}
+                                {%- set postTxt = "</details>" ~ postTxt -%}
+                                {%- set nameTxtStart = "<summary>" ~ nameTxtStart -%}
+                                {%- set NameTxtEnd = NameTxtEnd ~ "</summary>" -%}
+                              {%- endif -%}
+                    
+                              {%- set dump.tmp = dump.tmp ~ preTxt ~ nameTxtStart ~ name ~ ": " ~ NameTxtEnd ~ myDump[1] ~ postTxt -%}
+                            {%- endif -%}
+                          {%- endfor -%}
+                          {%- set dump.tmp = dump.tmp ~ "</ul>" -%} 
+                        {%- elif dump.val is string or dump.val is number -%}
+                          {%- set dump.tmp = dump.tmp ~ " " ~ dump.val ~ "" -%} 
+                          {%- set dump.valType="string" -%}
+                        {%- endif -%}
+                      {%- endif -%}
+                    
+                      {%- if thisStep == 1 -%}
+                        {{- dump.tmp -}}
+                      {%- else -%}
+                        {{- [dump.valType, dump.tmp]|to_json -}}
+                      {%- endif -%}
+                    {%- endmacro -%}
+                    {{ dumpToHTML(notifications.msg, [], 5, false, 3) }}
+              - action: notify.persistent_notification
+                data:
+                  title: 'Debug TgSprinkler'
+                  message: >-
+                    {{- debugMsg -}}
+  
+  
+    default:
+      - variables:
+          notifications: >-
+            {%- set hoterror = notifications.hoterror -%}
+            {%- set error = notifications.error -%}
+            {%- set msg = notifications.msg + [{"keine Aktion ausgelöst": ""}] -%}
+            {%- set devicestates = [] -%}
+            {% for switch in validInputs.inputs.irrigation_switches %}
+              {%- set devicestates = devicestates + [switch ~ ": " ~ ("eingeschaltet" if is_state(switch, 'on') else "ausgeschaltet")] -%}
+            {% endfor %}
+            {%- set devicestates = devicestates + ["Pause Timer: " ~ ("aktiv" if is_state(validInputs.inputs.pause_timer, 'active') else "inaktiv")] -%}
+            {%- set devicestates = devicestates + ["Water Timer: " ~ ("aktiv" if is_state(validInputs.inputs.water_timer, 'active') else "inaktiv")] -%}
+            {%- set msg = msg + [{"Gerätestatus":devicestates}] -%}
+            {%- set notifications = {"hoterror":hoterror, "error":error, "msg":msg} -%}
+            {{- notifications -}}
+      # Final Debug Block
+      - if:
+          - condition: template
+            value_template: '{{ validInputs.inputs.debug_mode }}'
+        then:
+          - variables:
+              debugMsg: >-
+                {# ___________________________________________________ #}
+                {%- macro dumpToHTML(val, filter=[], maxSteps=3, testJson=false, details=0, thisStep=0) -%}
+                  {%- set patternMap = '^[\s]*\{[\S\s]*\}[\s]*$' -%}
+                  {%- set patternList = '^[\s]*\[[\S\s]*\][\s]*$' -%}
+                
+                  {%- set dump = namespace() -%} 
+                  {%- set dump.tmp="" -%}
+                  {%- set dump.val=val -%}
+                  {%- set dump.valType=none -%}
+                  {%- set myFilter=filter -%}
+                  {%- set filter=[] -%}
+                  {%- set thisStep=thisStep + 1 -%}
+                  
+                  {%- if thisStep > maxSteps -%}
+                    {%- if dump.val is list or dump.val is mapping -%} {%- set dump.tmp = dump.val|to_json -%} {%- else -%} {%- set dump.tmp = dump.val -%} {%- endif -%}
+                    {%- set dump.valType="json" -%}
+                  {%- else -%}
+                    {%- if dump.val is string and testJson == true and ( dump.val is search(patternMap) or dump.val is search(patternList) )-%}
+                      {%- set dump.val=dump.val|replace("'", '"')|from_json -%}
+                    {%- endif -%}
+                    {%- if dump.val is list -%}
+                      {%- set dump.valType="list" -%}
+                      {%- set dump.tmp = dump.tmp ~ "<ul>" -%} 
+                      {%- for item in dump.val -%}
+                        {%- set myDump = dumpToHTML(item, filter, maxSteps, testJson, details, thisStep)|from_json -%}
+                        {%- set dump.tmp = dump.tmp ~ "<li>" ~ myDump[1] ~ "</li>" -%}
+                      {%- endfor -%}
+                      {%- set dump.tmp = dump.tmp ~ "</ul>" -%} 
+                    {%- elif dump.val is mapping -%}
+                      {%- set dump.valType="dict" -%}
+                      {%- set dump.tmp = dump.tmp ~ "<ul>" -%} 
+                      {%- for name, item in dump.val.items() -%}
+                        {%- if thisStep > 1 or name not in myFilter -%}
+                          {%- set preTxt = "<li>" -%}
+                          {%- set postTxt = "</li>" -%}
+                          {%- set nameTxtStart = "<b>" -%}
+                          {%- set NameTxtEnd = "</b>" -%}
+                          {%- set myDump = dumpToHTML(item, filter, maxSteps, testJson, details, thisStep)|from_json -%}
+                          {%- if details == thisStep and myDump[0] == "dict" -%}
+                            {%- set preTxt = preTxt ~ "<details>" -%}
+                            {%- set postTxt = "</details>" ~ postTxt -%}
+                            {%- set nameTxtStart = "<summary>" ~ nameTxtStart -%}
+                            {%- set NameTxtEnd = NameTxtEnd ~ "</summary>" -%}
+                          {%- endif -%}
+                
+                          {%- set dump.tmp = dump.tmp ~ preTxt ~ nameTxtStart ~ name ~ ": " ~ NameTxtEnd ~ myDump[1] ~ postTxt -%}
+                        {%- endif -%}
+                      {%- endfor -%}
+                      {%- set dump.tmp = dump.tmp ~ "</ul>" -%} 
+                    {%- elif dump.val is string or dump.val is number -%}
+                      {%- set dump.tmp = dump.tmp ~ " " ~ dump.val ~ "" -%} 
+                      {%- set dump.valType="string" -%}
+                    {%- endif -%}
+                  {%- endif -%}
+                
+                  {%- if thisStep == 1 -%}
+                    {{- dump.tmp -}}
+                  {%- else -%}
+                    {{- [dump.valType, dump.tmp]|to_json -}}
+                  {%- endif -%}
+                {%- endmacro -%}
+                {{ dumpToHTML(notifications.msg, [], 5, false, 3) }}
+          - action: notify.persistent_notification
+            data:
+              title: 'Debug TgSprinkler'
+              message: >-
+                {{- debugMsg -}}
+# Mode
+mode: queued

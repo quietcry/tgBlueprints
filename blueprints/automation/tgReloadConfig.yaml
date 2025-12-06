@@ -1,0 +1,47 @@
+blueprint:
+
+  name: Reload Config
+  domain: automation
+  description: läd die Konfiguration neu
+  input:
+    linked_button:
+      name: Button
+      selector:
+        entity:
+          multiple: false
+          filter:
+            domain: input_boolean
+    automations:
+      name: Automations
+      selector:
+        entity:
+          multiple: true
+
+variables:
+  linked_button: !input linked_button
+
+trigger:
+  - platform: state
+    entity_id: !input linked_button
+    from: "off"
+    to: "on"
+
+condition: []
+action:
+  - action: homeassistant.reload_all
+    metadata: {}
+    data: {}
+  - action: automation.trigger
+    metadata: {}
+    data:
+      skip_condition: true
+    target:
+      entity_id: !input automations
+  - action: input_boolean.turn_off
+    metadata: {}
+    data: {}
+    target:
+      entity_id: !input linked_button
+
+mode: single
+
