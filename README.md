@@ -106,6 +106,23 @@ Lädt die Home Assistant Konfiguration neu, wenn ein Button aktiviert wird.
 **Abhängigkeiten:**
 - `input_boolean` Entity als Button
 
+### 7. TG Kurzzeitstatus
+
+Dieses Blueprint verwaltet einen Kurzzeitstatus mit mehreren konfigurierbaren Status-Optionen. Jeder Status kann mehrere Buttons (Input Boolean oder Switch) haben, die automatisch synchronisiert werden. Wenn ein Button aktiviert wird, werden alle anderen Buttons des gleichen Status ebenfalls aktiviert. Zusätzlich kann für jeden Status ein Timer konfiguriert werden, der nach Ablauf automatisch alle Buttons dieses Status wieder deaktiviert. Der aktive Status-Text wird in einer Input Text Entity angezeigt.
+
+**Funktionen:**
+- Bis zu 5 konfigurierbare Status-Optionen
+- Automatische Synchronisation aller Buttons innerhalb eines Status
+- Timer-Unterstützung für automatische Deaktivierung
+- Status-Anzeige in einer Input Text Entity
+- Unterstützung für Input Boolean und Switch Entities
+- Unabhängige Status-Optionen
+
+**Abhängigkeiten:**
+- `input_text` Entity für die Status-Anzeige
+- Optional: `input_boolean` oder `switch` Entities für Buttons
+- Optional: `timer` Entities für automatische Deaktivierung
+
 ## Installation
 
 ### Ein-Klick-Installation (Empfohlen)
@@ -129,6 +146,9 @@ Klicke auf einen der folgenden Buttons, um das Blueprint direkt in Home Assistan
 
 **TG Reload Config:**
 [![Open your Home Assistant instance and show the blueprint import dialog with a specific blueprint pre-filled.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Fquietcry%2FtgBlueprints%2Fmain%2Fblueprints%2Fautomation%2FtgReloadConfig.yaml)
+
+**TG Kurzzeitstatus:**
+[![Open your Home Assistant instance and show the blueprint import dialog with a specific blueprint pre-filled.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Fquietcry%2FtgBlueprints%2Fmain%2Fblueprints%2Fautomation%2FtgShortTermStatus.yaml)
 
 ### Manuelle Installation
 
@@ -167,6 +187,11 @@ https://raw.githubusercontent.com/quietcry/tgBlueprints/main/blueprints/automati
 **TG Reload Config:**
 ```
 https://raw.githubusercontent.com/quietcry/tgBlueprints/main/blueprints/automation/tgReloadConfig.yaml
+```
+
+**TG Kurzzeitstatus:**
+```
+https://raw.githubusercontent.com/quietcry/tgBlueprints/main/blueprints/automation/tgShortTermStatus.yaml
 ```
 
 5. Klicke auf **Blueprint importieren**
@@ -259,6 +284,19 @@ https://raw.githubusercontent.com/quietcry/tgBlueprints/main/blueprints/automati
 4. Konfiguriere:
    - **Button**: `input_boolean` Entity als Trigger
    - **Automations**: Liste von Automatisierungen, die neu geladen werden sollen
+
+### TG Kurzzeitstatus
+
+1. Erstelle eine neue Automatisierung
+2. Wähle **Blueprint verwenden**
+3. Suche nach **TG Kurzzeitstatus**
+4. Konfiguriere:
+   - **Input Text - Status**: Die `input_text` Entity für die Status-Anzeige
+   - **Status 1-5**: Für jeden Status konfiguriere:
+     - **Entitäten**: Input Boolean oder Switch Entities für diesen Status
+     - **Timer**: Optional, Timer-Entity für automatische Deaktivierung
+     - **Status-Text**: Text, der angezeigt wird, wenn dieser Status aktiv ist
+     - **Timer-Dauer**: Dauer des Timers (Standard: 30 Minuten)
 
 ## Beispiele
 
