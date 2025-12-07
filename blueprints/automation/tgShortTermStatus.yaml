@@ -1,0 +1,444 @@
+blueprint:
+  name: Kurzzeitstatus
+  description: Verwaltet einen Kurzzeitstatus mit mehreren Buttons und automatischem Timer
+  domain: automation
+  input:
+    input_text_status:
+      name: Input Text - Status
+      description: Input Text Entity für den Status-Text
+      selector:
+        entity:
+          domain: input_text
+    status_1:
+      name: Status 1
+      collapsed: true
+      description: Einstellungen für den ersten Status
+      selector:
+        object:
+          fields:
+            entities_1:
+              name: Entitäten
+              description: Input Boolean oder Switch Entitäten für diesen Status
+              selector:
+                entity:
+                  multiple: true
+                  domain:
+                    - input_boolean
+                    - switch
+            timer_1:
+              name: Timer
+              description: Timer Entity
+              selector:
+                entity:
+                  domain: timer
+            statustext_1:
+              name: Status-Text
+              description: Text der angezeigt wird, wenn dieser Status aktiv ist
+              default: "status_1"
+              selector:
+                text:
+            duration_1:
+              name: Timer-Dauer
+              description: "Dauer des Timers (Standard: 30 Minuten)"
+              default: "00:30:00"
+              selector:
+                text:
+    status_2:
+      name: Status 2
+      collapsed: true
+      description: Einstellungen für den zweiten Status
+      selector:
+        object:
+          fields:
+            entities_2:
+              name: Entitäten
+              description: Input Boolean oder Switch Entitäten für diesen Status
+              selector:
+                entity:
+                  multiple: true
+                  domain:
+                    - input_boolean
+                    - switch
+            timer_2:
+              name: Timer
+              description: Timer Entity
+              selector:
+                entity:
+                  domain: timer
+            statustext_2:
+              name: Status-Text
+              description: Text der angezeigt wird, wenn dieser Status aktiv ist
+              default: "status_2"
+              selector:
+                text:
+            duration_2:
+              name: Timer-Dauer
+              description: "Dauer des Timers (Standard: 30 Minuten)"
+              default: "00:30:00"
+              selector:
+                text:
+    status_3:
+      name: Status 3
+      collapsed: true
+      description: Einstellungen für den dritten Status
+      selector:
+        object:
+          fields:
+            entities_3:
+              name: Entitäten
+              description: Input Boolean oder Switch Entitäten für diesen Status
+              selector:
+                entity:
+                  multiple: true
+                  domain:
+                    - input_boolean
+                    - switch
+            timer_3:
+              name: Timer
+              description: Timer Entity
+              selector:
+                entity:
+                  domain: timer
+            statustext_3:
+              name: Status-Text
+              description: Text der angezeigt wird, wenn dieser Status aktiv ist
+              default: "status_3"
+              selector:
+                text:
+            duration_3:
+              name: Timer-Dauer
+              description: "Dauer des Timers (Standard: 30 Minuten)"
+              default: "00:30:00"
+              selector:
+                text:
+    status_4:
+      name: Status 4
+      collapsed: true
+      description: Einstellungen für den vierten Status
+      selector:
+        object:
+          fields:
+            entities_4:
+              name: Entitäten
+              description: Input Boolean oder Switch Entitäten für diesen Status
+              selector:
+                entity:
+                  multiple: true
+                  domain:
+                    - input_boolean
+                    - switch
+            timer_4:
+              name: Timer
+              description: Timer Entity
+              selector:
+                entity:
+                  domain: timer
+            statustext_4:
+              name: Status-Text
+              description: Text der angezeigt wird, wenn dieser Status aktiv ist
+              default: "status_4"
+              selector:
+                text:
+            duration_4:
+              name: Timer-Dauer
+              description: "Dauer des Timers (Standard: 30 Minuten)"
+              default: "00:30:00"
+              selector:
+                text:
+    status_5:
+      name: Status 5
+      collapsed: true
+      description: Einstellungen für den fünften Status
+      selector:
+        object:
+          fields:
+            entities_5:
+              name: Entitäten
+              description: Input Boolean oder Switch Entitäten für diesen Status
+              selector:
+                entity:
+                  multiple: true
+                  domain:
+                    - input_boolean
+                    - switch
+            timer_5:
+              name: Timer
+              description: Timer Entity
+              selector:
+                entity:
+                  domain: timer
+            statustext_5:
+              name: Status-Text
+              description: Text der angezeigt wird, wenn dieser Status aktiv ist
+              default: "status_5"
+              selector:
+                text:
+            duration_5:
+              name: Timer-Dauer
+              description: "Dauer des Timers (Standard: 30 Minuten)"
+              default: "00:30:00"
+              selector:
+                text:
+variables:
+  statusfield: !input input_text_status
+
+  tmp_states:
+    - name: status_1
+      buttons: !input status_1.entities_1
+      timer: !input status_1.timer_1
+      statustext: !input status_1.statustext_1
+      duration: !input status_1.duration_1
+    - name: status_2
+      buttons: !input status_2.entities_2
+      timer: !input status_2.timer_2
+      statustext: !input status_2.statustext_2
+      duration: !input status_2.duration_2
+    - name: status_3
+      buttons: !input status_3.entities_3
+      timer: !input status_3.timer_3
+      statustext: !input status_3.statustext_3
+      duration: !input status_3.duration_3
+    - name: status_4
+      buttons: !input status_4.entities_4
+      timer: !input status_4.timer_4
+      statustext: !input status_4.statustext_4
+      duration: !input status_4.duration_4
+    - name: status_5
+      buttons: !input status_5.entities_5
+      timer: !input status_5.timer_5
+      statustext: !input status_5.statustext_5
+      duration: !input status_5.duration_5
+
+  setted_states: >-
+    {% set result = [] %}
+    {% for state in tmp_states %}
+      {% set buttons_list = state.buttons if state.buttons is iterable and state.buttons is not string else [state.buttons] if state.buttons is defined else [] %}
+      {% if buttons_list | length > 0 and state.statustext and state.statustext != '' %}
+        {% set normalized_state = state | combine({'buttons': buttons_list}) %}
+        {% set _ = result.append(normalized_state) %}
+      {% endif %}
+    {% endfor %}
+    {{ result }}
+  observed_buttons: >-
+    {% set result = [] %}
+    {% for state in tmp_states %}
+      {% set buttons_list = state.buttons if state.buttons is iterable and state.buttons is not string else [state.buttons] if state.buttons is defined else [] %}
+      {% for button in buttons_list %}
+        {% set _ = result.append(button) %}
+      {% endfor %}
+    {% endfor %}
+    {{ result }}
+  observed_timers: >-
+    {% set result = [] %}
+    {% for state in tmp_states %}
+      {% if state.timer and state.timer != '' %}
+        {% set _ = result.append(state.timer) %}
+      {% endif %}
+    {% endfor %}
+    {{ result }}
+
+trigger:
+  - platform: event
+    event_type: state_changed
+    id: statechanged
+    variables:
+      triggerdevice: "{{ {'id':trigger.event.data.entity_id, 'new_state': trigger.event.data.new_state, 'old_state': trigger.event.data.old_state} }}"
+  
+condition:
+  - condition: or
+    conditions:
+      - condition: and
+        conditions:
+          - condition: trigger
+            id: statechanged
+          - condition: template
+            value_template: >-
+              {%- if observed_buttons is list -%}
+                {%- if triggerdevice.id in observed_buttons -%}
+                  {%- if triggerdevice.new_state.state in ['on', 'off'] and triggerdevice.old_state.state in ['on', 'off'] -%}
+                    true
+                  {%- endif -%}
+                {%- endif -%}
+              {%- endif -%}
+      - condition: and
+        conditions:
+          - condition: trigger
+            id: statechanged
+          - condition: template
+            value_template: >-
+              {%- if observed_timers is list -%}
+                {%- if triggerdevice.id in observed_timers -%}
+                  {%- if triggerdevice.old_state.state == 'active' and triggerdevice.new_state.state == 'idle' -%}
+                    true
+                  {%- endif -%}
+                {%- endif -%}
+              {%- endif -%}
+
+
+action:
+  - variables:
+      state_data: >-
+        {%- set result = {} -%}
+        {%- if trigger.id == 'statechanged' and triggerdevice.id -%}
+          {%- set triggered_entity = triggerdevice.id -%}
+          {%- for state in setted_states -%}
+            {%- if triggered_entity in state.buttons -%}
+              {%- set result = state | combine({'type': 'button', 'id': triggered_entity, 'state': triggerdevice.new_state.state}) -%}
+              {%- break -%}
+            {%- elif triggered_entity == state.timer -%}
+              {%- set result = state | combine({'type': 'timer', 'id': triggered_entity, 'state': triggerdevice.new_state.state}) -%}
+              {%- break -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {{- result -}}
+        {%- else -%}
+          {{- {} -}}
+        {%- endif -%}
+
+  # Arbeite mit state_data
+          - if:
+      - condition: template
+        value_template: "{{ state_data and state_data.type == 'button' and state_data.timer and state_data.duration }}"
+      - condition: template
+        value_template: "{{ triggerdevice and triggerdevice.new_state and triggerdevice.new_state.state == 'on' }}"
+            then:
+      # Button wurde eingeschaltet - Timer abbrechen und neu starten
+              - action: timer.cancel
+                target:
+          entity_id: "{{ state_data.timer }}"
+              - action: timer.start
+                target:
+          entity_id: "{{ state_data.timer }}"
+                data:
+          duration: "{{ state_data.duration }}"
+  - if:
+      - condition: template
+        value_template: "{{ state_data and state_data.type == 'button' and state_data.timer }}"
+      - condition: template
+        value_template: "{{ triggerdevice and triggerdevice.new_state and triggerdevice.new_state.state == 'off' }}"
+    then:
+      # Button wurde ausgeschaltet - Timer beenden falls aktiv
+          - if:
+              - condition: state
+            entity_id: "{{ state_data.timer }}"
+            state: active
+        then:
+          - action: timer.finish
+            target:
+              entity_id: "{{ state_data.timer }}"
+  - if:
+      - condition: template
+        value_template: "{{ state_data and state_data.type == 'timer' and state_data.buttons and state_data.buttons | length > 0 }}"
+            then:
+      # Timer ist auf idle - setze alle Buttons dieses Status auf off
+      - repeat:
+          for_each: "{{ state_data.buttons }}"
+          sequence:
+            - choose:
+                - conditions:
+                    - condition: template
+                      value_template: "{{ repeat.item.startswith('input_boolean.') }}"
+                  sequence:
+                    - action: input_boolean.turn_off
+                target:
+                        entity_id: "{{ repeat.item }}"
+                - conditions:
+                    - condition: template
+                      value_template: "{{ repeat.item.startswith('switch.') }}"
+                  sequence:
+                    - action: switch.turn_off
+                target:
+                        entity_id: "{{ repeat.item }}"
+  - if:
+      - condition: template
+        value_template: "{{ state_data and state_data.type == 'button' and state_data.buttons and state_data.buttons | length > 0 and state_data.id }}"
+    then:
+      # Button-Änderung - synchronisiere alle anderen Buttons dieses Status
+              - variables:
+          target_state: "{{ triggerdevice.new_state.state if triggerdevice and triggerdevice.new_state else '' }}"
+      - if:
+          - condition: template
+            value_template: "{{ target_state != '' }}"
+        then:
+          - repeat:
+              for_each: "{{ state_data.buttons | reject('eq', state_data.id) | list }}"
+              sequence:
+                - if:
+                    - condition: and
+                      conditions:
+                        - condition: template
+                          value_template: "{{ target_state == 'on' }}"
+                        - condition: state
+                          entity_id: "{{ repeat.item }}"
+                          state: "off"
+                  then:
+                - choose:
+                    - conditions:
+                        - condition: template
+                          value_template: "{{ repeat.item.startswith('input_boolean.') }}"
+                      sequence:
+                        - action: input_boolean.turn_on
+                target:
+                            entity_id: "{{ repeat.item }}"
+      - conditions:
+                        - condition: template
+                          value_template: "{{ repeat.item.startswith('switch.') }}"
+        sequence:
+                        - action: switch.turn_on
+                          target:
+                            entity_id: "{{ repeat.item }}"
+          - if:
+                    - condition: and
+                      conditions:
+                        - condition: template
+                          value_template: "{{ target_state == 'off' }}"
+              - condition: state
+                          entity_id: "{{ repeat.item }}"
+                          state: "on"
+            then:
+                - choose:
+                    - conditions:
+                        - condition: template
+                          value_template: "{{ repeat.item.startswith('input_boolean.') }}"
+                      sequence:
+                        - action: input_boolean.turn_off
+                          target:
+                            entity_id: "{{ repeat.item }}"
+                    - conditions:
+                        - condition: template
+                          value_template: "{{ repeat.item.startswith('switch.') }}"
+                      sequence:
+              - action: switch.turn_off
+                target:
+                            entity_id: "{{ repeat.item }}"
+  # Bestimme Statustext
+  - variables:
+      statustext: ""
+  - repeat:
+      for_each: "{{ setted_states }}"
+      sequence:
+          - if:
+            - condition: and
+              conditions:
+                - condition: template
+                  value_template: "{{ repeat.item.buttons and repeat.item.buttons | length > 0 and states[repeat.item.buttons[0]].state == 'on' }}"
+                - condition: template
+                  value_template: "{{ statustext == '' }}"
+            then:
+              - variables:
+                statustext: "{{ repeat.item.statustext }}"
+  # Setze Statustext falls geändert
+  - if:
+      - condition: template
+        value_template: "{{ statusfield and statusfield.startswith('input_text.') and states[statusfield] is defined }}"
+      - condition: template
+        value_template: "{{ statustext != states[statusfield].state }}"
+    then:
+  - action: input_text.set_value
+    target:
+          entity_id: "{{ statusfield }}"
+    data:
+          value: "{{ statustext }}"
+
+mode: queued
+
