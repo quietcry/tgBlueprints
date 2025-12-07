@@ -1,4 +1,3 @@
-
 blueprint:
   name: Extened person states
   domain: automation
@@ -62,8 +61,6 @@ blueprint:
           options:
             - append
             - replace
-
-
 
     status_1:
       name: state 1 [optional]
@@ -232,11 +229,7 @@ blueprint:
               filter:
                 domain: schedule
 
-
-
-
 variables:
-
   linked_person: !input linked_person
   linked_field: !input linked_field
   linked_activitybutton: !input linked_activitybutton
@@ -247,39 +240,39 @@ variables:
   debugMsg: ""
   active_status: inactive
 
-
-  observable: [
-              {
-              'status': !input status_1_name,
-              'basisstatus': !input status_1_basisstatus,
-              'devices': !input status_1_linked_devices,
-              'schedule': !input status_1_schedule,
-              },
-              {
-              'status': !input status_2_name,
-              'basisstatus': !input status_2_basisstatus,
-              'devices': !input status_2_linked_devices,
-              'schedule': !input status_2_schedule,
-              },
-              {
-              'status': !input status_3_name,
-              'basisstatus': !input status_3_basisstatus,
-              'devices': !input status_3_linked_devices,
-              'schedule': !input status_3_schedule,
-              },
-              {
-              'status': !input status_4_name,
-              'basisstatus': !input status_4_basisstatus,
-              'devices': !input status_4_linked_devices,
-              'schedule': !input status_4_schedule,
-              },
-              {
-              'status': !input status_5_name,
-              'basisstatus': !input status_5_basisstatus,
-              'devices': !input status_5_linked_devices,
-              'schedule': !input status_5_schedule,
-              }
-              ]
+  observable:
+    [
+      {
+        "status": !input status_1_name,
+        "basisstatus": !input status_1_basisstatus,
+        "devices": !input status_1_linked_devices,
+        "schedule": !input status_1_schedule,
+      },
+      {
+        "status": !input status_2_name,
+        "basisstatus": !input status_2_basisstatus,
+        "devices": !input status_2_linked_devices,
+        "schedule": !input status_2_schedule,
+      },
+      {
+        "status": !input status_3_name,
+        "basisstatus": !input status_3_basisstatus,
+        "devices": !input status_3_linked_devices,
+        "schedule": !input status_3_schedule,
+      },
+      {
+        "status": !input status_4_name,
+        "basisstatus": !input status_4_basisstatus,
+        "devices": !input status_4_linked_devices,
+        "schedule": !input status_4_schedule,
+      },
+      {
+        "status": !input status_5_name,
+        "basisstatus": !input status_5_basisstatus,
+        "devices": !input status_5_linked_devices,
+        "schedule": !input status_5_schedule,
+      },
+    ]
   observed: >-
     {%- macro observer(itemlist) -%}
     {%- for item in itemlist -%}
@@ -315,7 +308,6 @@ variables:
     {{- ns.myEntities -}}
 
   sendmessage: true
-
 
 trigger:
   - platform: homeassistant
@@ -442,10 +434,6 @@ action:
             {%- endif -%}
           {%- endfor -%}
         {%- endif -%}
-        {%- if addPersonName is defined and addPersonName -%}
-          {%- set ns.state = name~"!" ~ ns.state  -%}
-        {%- endif -%}
-
 
         {%- if linked_text_inputs is defined and linked_text_inputs is iterable -%}
           {%- for text_input in linked_text_inputs -%}
@@ -467,6 +455,10 @@ action:
             {%- endif -%}
           {%- endfor -%}
         {%- endif -%}
+        {%- if addPersonName is defined and addPersonName -%}
+          {%- set ns.state = name~"!" ~ ns.state  -%}
+        {%- endif -%}
+
         {{- {"state":ns.state, "debugMsg":ns.debugmsg, "debug":ns.debug } -}}
   - if:
       - condition: template
@@ -550,7 +542,5 @@ action:
             {%- endmacro -%}
             {{ my_status.debugMsg ~ dumpToHTML(my_status, ["debugMsg"], 5, true, 2) }}
             <hr>triggered by: <ul><li>{%- if "id" in trigger -%}{{- trigger["id"] }}{%- endif %} [<i>{%- if "entity_id" in trigger -%}{{- trigger["entity_id"] }}{%- else -%}{{- trigger -}}{%- endif -%}</i>]</li></ul>
-
-
 
 mode: single
