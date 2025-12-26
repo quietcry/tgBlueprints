@@ -345,6 +345,9 @@ action:
             {%- endif -%}
           {%- endfor -%}
         {%- endif -%}
+        {%- if ns.result is not none -%}
+          {%- set ns.result = dict(ns.result , **{'old_statustext': states(statusfield)}) -%}
+        {%- endif -%}
         {{- ns.result -}}
         
         
@@ -360,7 +363,7 @@ action:
         {% else %}
           {% set old_result = {} %}
         {% endif %}
-        {% set result = dict(old_result, **{'debug': "init"}) %}
+        {% set result = dict(old_result, **{'debug': "init", 'statusfield': statusfield}) %}
         {% if state_data is defined %}
           {% set result = dict(result, **{'state_data': state_data}) %}
         {% endif %}
@@ -522,13 +525,13 @@ action:
                       metadata: {}
                       data:
                         title: "Debug TgShortTermStatusX"
-                        message: "{{- 'buttons sync' ~ ' ' ~ target_state ~ ' ' ~ repeat.item ~ ' ' ~ states(repeat.item).state -}}"
+                        message: "{{- 'buttons sync' ~ ' ' ~ target_state ~ ' ' ~ repeat.item ~ ' ' ~ states(repeat.item) -}}"
       
                     - if:
                         - condition: and
                           conditions:
                             - condition: template
-                              value_template: "{{ states(repeat.item).state != target_state }}"
+                              value_template: "{{ states(repeat.item) != target_state }}"
                       then:
                         - choose:
                             - conditions:
@@ -565,6 +568,32 @@ action:
       
       
       
+  # Bestimme Statustext durch Prüfung aller Status
+  - variables:
+      statustext: >-
+        {%- set ns = namespace(result='') -%}
+        {%- for state in setted_states -%}
+          {%- if state.buttons is defined and state.buttons | length > 0 -%}
+            {%- if states(state.buttons[0]) == 'on' -%}
+              {%- if state.statustext is defined and state.statustext != '' and state.statustext != '-' -%}
+                {%- set ns.result = state.statustext -%}
+              {%- endif -%}
+            {%- endif -%}
+          {%- endif -%}
+        {%- endfor -%}
+        {{- ns.result -}}
+  # Setze Statustext falls geändert
+  - if:
+      - condition: template
+        value_template: "{{- statusfield and statusfield != '-' and statusfield != '' and statusfield.startswith('input_text.') and states(statusfield) != 'unavailable' -}}"
+      - condition: template
+        value_template: "{{- statustext != states(statusfield) -}}"
+    then:
+      - action: input_text.set_value
+        target:
+          entity_id: "{{- statusfield -}}"
+        data:
+          value: "{{- statustext -}}"
   
   
   
