@@ -673,7 +673,7 @@ action:
           {% endif %}
         {% endfor %}
         {% if ns.result is none or ns.result == '' %}
-          {% set ns.result = {'calculated_status_text': "-"} %}
+          {% set ns.result = {'calculated_status_text': ""} %}
         {% endif %}
         {% set ns.debug = {'items': ns.debug, 'saved_items': ns.save_array, 'item_array': ns.item_array, 'old_save_array': old_save_array, 'result': ns.result} %}
         {{- {'result': ns.result, 

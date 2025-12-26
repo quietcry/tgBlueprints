@@ -1,5 +1,7 @@
+
+
 blueprint:
-  name: Extened person states
+  name: Extended person states
   domain: automation
   description: >-
     Provides a text entity with a configurable state.<br>The configured state conditions are checked in turn and the last one that is true is returned
@@ -10,7 +12,7 @@ blueprint:
       default: false
       selector:
         boolean:
-
+  
     linked_person:
       name: Person entity [mandatory]
       description: a person entity, preferably linked to a tracker
@@ -43,15 +45,6 @@ blueprint:
       default: false
       selector:
         boolean:
-    linked_text_inputs:
-      name: Text inputs [optional]
-      description: List of text input entities whose values will be appended to the state text with "|" as separator
-      default: []
-      selector:
-        entity:
-          multiple: true
-          filter:
-            domain: input_text
     text_input_mode:
       name: Text input mode
       description: 'How to handle text inputs: "append" adds them to the existing state, "replace" replaces the state with text inputs'
@@ -61,7 +54,17 @@ blueprint:
           options:
             - append
             - replace
-
+  
+    linked_text_inputs_before:
+      name: Text inputs before states [optional]
+      description: List of text input entities whose values will also compared with the other states (evaluated before internal states)
+      default: []
+      selector:
+        entity:
+          multiple: true
+          filter:
+            domain: input_text
+  
     status_1:
       name: state 1 [optional]
       icon: mdi:cog
@@ -161,7 +164,7 @@ blueprint:
             entity:
               filter:
                 domain: schedule
-
+  
     status_4:
       name: state 4 [optional]
       icon: mdi:cog
@@ -228,18 +231,29 @@ blueprint:
             entity:
               filter:
                 domain: schedule
+  
+    linked_text_inputs_after:
+      name: Text inputs after states [optional]
+      description: List of text input entities whose values will also compared with the other states (evaluated after internal states)
+      default: []
+      selector:
+        entity:
+          multiple: true
+          filter:
+            domain: input_text
 
 variables:
   linked_person: !input linked_person
   linked_field: !input linked_field
   linked_activitybutton: !input linked_activitybutton
   addPersonName: !input addPersonName
-  linked_text_inputs: !input linked_text_inputs
+  linked_text_inputs_before: !input linked_text_inputs_before
+  linked_text_inputs_after: !input linked_text_inputs_after
   text_input_mode: !input text_input_mode
   debugmode: !input debugmode
   debugMsg: ""
   active_status: inactive
-
+  
   observable:
     [
       {
@@ -296,18 +310,27 @@ variables:
     {%- endmacro -%}
     {%- set ns = namespace(myEntities=[])%}
     {%- set ns.myEntities = ns.myEntities + [linked_person] + [linked_activitybutton]%}
-    {%- if linked_text_inputs is defined and linked_text_inputs is iterable -%}
-      {%- for text_input in linked_text_inputs -%}
+    {%- if linked_text_inputs_before is defined and linked_text_inputs_before is iterable -%}
+      {%- for text_input in linked_text_inputs_before -%}
         {%- if text_input and text_input != "-" and states(text_input) != 'unknown' -%}
           {%- set ns.myEntities = ns.myEntities + [text_input] -%}
         {%- endif -%}
       {%- endfor -%}
     {%- endif -%}
-
+    {%- if linked_text_inputs_after is defined and linked_text_inputs_after is iterable -%}
+      {%- for text_input in linked_text_inputs_after -%}
+        {%- if text_input and text_input != "-" and states(text_input) != 'unknown' -%}
+          {%- set ns.myEntities = ns.myEntities + [text_input] -%}
+        {%- endif -%}
+      {%- endfor -%}
+    {%- endif -%}
+    
     {%- set status = observer(observable)  -%}
     {{- ns.myEntities -}}
-
+    
+  
   sendmessage: true
+  
 
 trigger:
   - platform: homeassistant
@@ -318,11 +341,7 @@ trigger:
     id: time_trigger
   - platform: event
     event_type: state_changed
-  - platform: state
-    entity_id: input_boolean.reloadconfig
-    from: "on"
-    to: "off"
-    id: "reloadConfig"
+  
 
 condition:
   - condition: or
@@ -331,7 +350,6 @@ condition:
         id:
           - haStart
           - time_trigger
-          - reloadConfig
       - condition: template
         value_template: >-
           {%- if trigger.event is defined and trigger.event.data is defined and trigger.event.data.entity_id is defined -%}
@@ -339,6 +357,7 @@ condition:
               true
             {%- endif -%}
           {%- endif -%}
+  
 
 action:
   - variables:
@@ -362,31 +381,31 @@ action:
           {%- else -%}
             {%- set tmp.debug = tmp.debug ~ "<li>basestate not set" ~ "</li>" -%}
           {%- endif -%}
-
+        
           {# Test Status is set#}
           {%- if item.status is not defined or not item.status or item.status == "-" -%}
             {%- set tmp.isError = true -%}
             {%- set tmp.debug = tmp.debug ~ "<li>non resulted state defined " ~ "</li>" -%}
           {%- endif -%}
-
-
+        
+        
           {# Test schedule is not set or aktive #}
           {%- if item.schedule is not defined or item.schedule == "-" or item.schedule == "" -%}
             {%- set tmp.debug = tmp.debug ~ "<li>non schedule defined " ~ "</li>" -%}
           {%- elif states(item.schedule) == 'on' -%}
             {%- set tmp.debug = tmp.debug ~ "<li>schedule is on " ~ "</li>" -%}
             {%- set tmp.schedule = "on" -%}
-
+        
           {%- elif states(item.schedule) == 'off' -%}
             {%- set tmp.debug = tmp.debug ~ "<li>schedule is off " ~ "</li>" -%}
             {%- set tmp.schedule = "off" -%}
-
+        
           {%- else -%}
             {%- set tmp.debug = tmp.debug ~ "<li>schedule is wrong" ~ "</li>" -%}
             {%- set tmp.schedule = "wrong" -%}
-
+        
           {%- endif -%}
-
+        
           {# Test devices is aktive #}
           {%- if tmp.isError == false and tmp.schedule not in ["off","wrong"] -%}
             {%- if item.devices and item.devices is string and item.devices != "-" -%}
@@ -409,11 +428,11 @@ action:
             {%- endfor -%}
           {%- endif -%}
           {%- set ns.debug = ns.debug + [ tmp.debug ~ "</ul>" ] -%}
-
+        
           {%- if mystate.state != "-" -%}
             {{- mystate.state -}}
           {%- endif -%}
-
+        
         {%- endmacro -%}
         {#-------------------------------------------#}
         {%- set ns = namespace() -%}
@@ -426,6 +445,30 @@ action:
           {%- set ns.state = "inactive" -%}
         {%- else -%}
           {%- set ns.debug = ns.debug + ["active button is on or not set"] -%}
+        
+          {# Process text inputs BEFORE internal states #}
+          {%- if linked_text_inputs_before is defined and linked_text_inputs_before is iterable -%}
+            {%- for text_input in linked_text_inputs_before -%}
+              {%- if text_input and text_input != "-" -%}
+                {%- set text_value = states(text_input) -%}
+                {%- if text_value is defined and text_value is not none and text_value != 'unknown' and text_value|string|trim != '' -%}
+                  {%- if text_input_mode is defined and text_input_mode == "replace" -%}
+                    {# Replace mode: Each text input REPLACES the state completely #}
+                    {%- set ns.state = text_value|string|trim -%}
+                  {%- else -%}
+                    {# Append mode: Text inputs are appended to the state #}
+                    {%- if ns.state is defined and ns.state is not none and ns.state|string|trim != '' and ns.state|string|trim != 'unknown' -%}
+                      {%- set ns.state = ns.state ~ "|" ~ text_value|string|trim -%}
+                    {%- else -%}
+                      {%- set ns.state = text_value|string|trim -%}
+                    {%- endif -%}
+                  {%- endif -%}
+                {%- endif -%}
+              {%- endif -%}
+            {%- endfor -%}
+          {%- endif -%}
+        
+          {# Process internal states #}
           {%- for line in observable -%}
             {%- set ns.debug = ns.debug + ["test state condition " ~ loop.index] -%}
             {%- set status = getStatus(line, linked_person)  -%}
@@ -433,33 +476,35 @@ action:
               {%- set ns.state = status  -%}
             {%- endif -%}
           {%- endfor -%}
-        {%- endif -%}
-
-        {%- if linked_text_inputs is defined and linked_text_inputs is iterable -%}
-          {%- for text_input in linked_text_inputs -%}
-            {%- if text_input and text_input != "-" -%}
-              {%- set text_value = states(text_input) -%}
-              {%- if text_value is defined and text_value is not none and text_value != 'unknown' and text_value|string|trim != '' -%}
-                {%- if text_input_mode is defined and text_input_mode == "replace" -%}
-                  {# Replace mode: Each text input REPLACES the state completely #}
-                  {%- set ns.state = text_value|string|trim -%}
-                {%- else -%}
-                  {# Append mode: Text inputs are appended to the state #}
-                  {%- if ns.state is defined and ns.state is not none and ns.state|string|trim != '' and ns.state|string|trim != 'unknown' -%}
-                    {%- set ns.state = ns.state ~ "|" ~ text_value|string|trim -%}
-                  {%- else -%}
+        
+          {# Process text inputs AFTER internal states #}
+          {%- if linked_text_inputs_after is defined and linked_text_inputs_after is iterable -%}
+            {%- for text_input in linked_text_inputs_after -%}
+              {%- if text_input and text_input != "-" -%}
+                {%- set text_value = states(text_input) -%}
+                {%- if text_value is defined and text_value is not none and text_value != 'unknown' and text_value|string|trim != '' -%}
+                  {%- if text_input_mode is defined and text_input_mode == "replace" -%}
+                    {# Replace mode: Each text input REPLACES the state completely #}
                     {%- set ns.state = text_value|string|trim -%}
+                  {%- else -%}
+                    {# Append mode: Text inputs are appended to the state #}
+                    {%- if ns.state is defined and ns.state is not none and ns.state|string|trim != '' and ns.state|string|trim != 'unknown' -%}
+                      {%- set ns.state = ns.state ~ "|" ~ text_value|string|trim -%}
+                    {%- else -%}
+                      {%- set ns.state = text_value|string|trim -%}
+                    {%- endif -%}
                   {%- endif -%}
                 {%- endif -%}
               {%- endif -%}
-            {%- endif -%}
-          {%- endfor -%}
+            {%- endfor -%}
+          {%- endif -%}
         {%- endif -%}
         {%- if addPersonName is defined and addPersonName -%}
           {%- set ns.state = name~"!" ~ ns.state  -%}
         {%- endif -%}
-
+        
         {{- {"state":ns.state, "debugMsg":ns.debugmsg, "debug":ns.debug } -}}
+        
   - if:
       - condition: template
         value_template: "{{states(linked_field) != my_status.state}}"
@@ -483,15 +528,15 @@ action:
             {%- macro dumpToHTML(val, filter=[], maxSteps=3, testJson=false, details=0, thisStep=0) -%}
               {%- set patternMap = '^[\s]*\{[\S\s]*\}[\s]*$' -%}
               {%- set patternList = '^[\s]*\[[\S\s]*\][\s]*$' -%}
-
-              {%- set dump = namespace() -%}
+            
+              {%- set dump = namespace() -%} 
               {%- set dump.tmp="" -%}
               {%- set dump.val=val -%}
               {%- set dump.valType=none -%}
               {%- set myFilter=filter -%}
               {%- set filter=[] -%}
               {%- set thisStep=thisStep + 1 -%}
-
+              
               {%- if thisStep > maxSteps -%}
                 {%- if dump.val is list or dump.val is mapping -%} {%- set dump.tmp = dump.val|to_json -%} {%- else -%} {%- set dump.tmp = dump.val -%} {%- endif -%}
                 {%- set dump.valType="json" -%}
@@ -501,15 +546,15 @@ action:
                 {%- endif -%}
                 {%- if dump.val is list -%}
                   {%- set dump.valType="list" -%}
-                  {%- set dump.tmp = dump.tmp ~ "<ul>" -%}
+                  {%- set dump.tmp = dump.tmp ~ "<ul>" -%} 
                   {%- for item in dump.val -%}
                     {%- set myDump = dumpToHTML(item, filter, maxSteps, testJson, details, thisStep)|from_json -%}
                     {%- set dump.tmp = dump.tmp ~ "<li>" ~ myDump[1] ~ "</li>" -%}
                   {%- endfor -%}
-                  {%- set dump.tmp = dump.tmp ~ "</ul>" -%}
+                  {%- set dump.tmp = dump.tmp ~ "</ul>" -%} 
                 {%- elif dump.val is mapping -%}
                   {%- set dump.valType="dict" -%}
-                  {%- set dump.tmp = dump.tmp ~ "<ul>" -%}
+                  {%- set dump.tmp = dump.tmp ~ "<ul>" -%} 
                   {%- for name, item in dump.val.items() -%}
                     {%- if thisStep > 1 or name not in myFilter -%}
                       {%- set preTxt = "<li>" -%}
@@ -523,17 +568,17 @@ action:
                         {%- set nameTxtStart = "<summary>" ~ nameTxtStart -%}
                         {%- set NameTxtEnd = NameTxtEnd ~ "</summary>" -%}
                       {%- endif -%}
-
+            
                       {%- set dump.tmp = dump.tmp ~ preTxt ~ nameTxtStart ~ name ~ ": " ~ NameTxtEnd ~ myDump[1] ~ postTxt -%}
                     {%- endif -%}
                   {%- endfor -%}
-                  {%- set dump.tmp = dump.tmp ~ "</ul>" -%}
+                  {%- set dump.tmp = dump.tmp ~ "</ul>" -%} 
                 {%- elif dump.val is string or dump.val is number -%}
-                  {%- set dump.tmp = dump.tmp ~ " " ~ dump.val ~ "" -%}
+                  {%- set dump.tmp = dump.tmp ~ " " ~ dump.val ~ "" -%} 
                   {%- set dump.valType="string" -%}
                 {%- endif -%}
               {%- endif -%}
-
+            
               {%- if thisStep == 1 -%}
                 {{- dump.tmp -}}
               {%- else -%}
@@ -542,5 +587,7 @@ action:
             {%- endmacro -%}
             {{ my_status.debugMsg ~ dumpToHTML(my_status, ["debugMsg"], 5, true, 2) }}
             <hr>triggered by: <ul><li>{%- if "id" in trigger -%}{{- trigger["id"] }}{%- endif %} [<i>{%- if "entity_id" in trigger -%}{{- trigger["entity_id"] }}{%- else -%}{{- trigger -}}{%- endif -%}</i>]</li></ul>
+  
 
 mode: single
+
