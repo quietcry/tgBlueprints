@@ -123,6 +123,26 @@ Dieses Blueprint verwaltet einen Kurzzeitstatus mit mehreren konfigurierbaren St
 - Optional: `input_boolean` oder `switch` Entities für Buttons
 - Optional: `timer` Entities für automatische Deaktivierung
 
+### 8. TG WakeUpStatus
+
+Dieses Blueprint überwacht Weckzeiten (wie eine Handyuhr) und setzt einen Status-Text, wenn alle konfigurierten Bedingungen erfüllt sind. Es unterstützt optionale Vorlaufzeiten für Aktionen vor dem Wecken (z.B. Bad heizen, Kaffee kochen) und kann Weckzeiten automatisch von GMT in die lokale Zeitzone konvertieren.
+
+**Funktionen:**
+- Weckzeit-Überwachung aus einem Sensor
+- Automatische GMT/Lokalisierung: Erkennung und Konvertierung von GMT-Zeiten in die lokale Zeitzone
+- Weckzeit-Validierung: Ignoriert Weckzeiten die über 0:00 Uhr liegen
+- Personen-Zuordnung: Status kann einer Person zugeordnet werden
+- Bedingungslisten: Entities die "on" oder "off" sein müssen
+- Vorlaufzeit: Optionale Vorlaufzeit vor dem Wecken für Aktionen
+- Status-Anzeige: Setzt einen konfigurierbaren Status-Text wenn alle Bedingungen erfüllt sind
+
+**Abhängigkeiten:**
+- `input_text` Entity für die Status-Anzeige
+- Person-Entity die überwacht werden soll
+- Weckzeit-Sensor Entity (kann GMT oder Lokalzeit sein)
+- Optional: `input_boolean` oder `switch` Entities für Bedingungen
+- Optional: Vorlaufzeit für Aktionen vor dem Wecken
+
 ## Installation
 
 ### Ein-Klick-Installation (Empfohlen)
@@ -149,6 +169,9 @@ Klicke auf einen der folgenden Buttons, um das Blueprint direkt in Home Assistan
 
 **TG Kurzzeitstatus:**
 [![Open your Home Assistant instance and show the blueprint import dialog with a specific blueprint pre-filled.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Fquietcry%2FtgBlueprints%2Fmain%2Fblueprints%2Fautomation%2FtgShortTermStatus.yaml)
+
+**TG WakeUpStatus:**
+[![Open your Home Assistant instance and show the blueprint import dialog with a specific blueprint pre-filled.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Fquietcry%2FtgBlueprints%2Fmain%2Fblueprints%2Fautomation%2FtgWakeUpStatus.yaml)
 
 ### Manuelle Installation
 
@@ -192,6 +215,11 @@ https://raw.githubusercontent.com/quietcry/tgBlueprints/main/blueprints/automati
 **TG Kurzzeitstatus:**
 ```
 https://raw.githubusercontent.com/quietcry/tgBlueprints/main/blueprints/automation/tgShortTermStatus.yaml
+```
+
+**TG WakeUpStatus:**
+```
+https://raw.githubusercontent.com/quietcry/tgBlueprints/main/blueprints/automation/tgWakeUpStatus.yaml
 ```
 
 5. Klicke auf **Blueprint importieren**
@@ -297,6 +325,24 @@ https://raw.githubusercontent.com/quietcry/tgBlueprints/main/blueprints/automati
      - **Timer**: Optional, Timer-Entity für automatische Deaktivierung
      - **Status-Text**: Text, der angezeigt wird, wenn dieser Status aktiv ist
      - **Timer-Dauer**: Dauer des Timers (Standard: 30 Minuten)
+
+### TG WakeUpStatus
+
+1. Erstelle eine neue Automatisierung
+2. Wähle **Blueprint verwenden**
+3. Suche nach **TG WakeUpStatus**
+4. Konfiguriere:
+   - **Input Text - Status**: Die `input_text` Entity für die Status-Anzeige
+   - **Person**: Person-Entity die überwacht werden soll
+   - **Person Status Pattern**: Muster für Person-Status (z.B. "home", "not_home", oder Jinja-Template)
+   - **Weckzeit-Sensor**: Sensor Entity die die Weckzeit enthält (kann GMT oder Lokalzeit sein)
+   - **Vorlaufzeit**: Optional, Vorlaufzeit vor dem Wecken (z.B. "01:00:00" für 1 Stunde)
+   - **Entities die ON sein müssen**: Optional, Liste von Entities die "on" sein müssen
+   - **Entities die OFF sein müssen**: Optional, Liste von Entities die "off" sein müssen
+   - **Status-Text**: Text der angezeigt wird, wenn alle Bedingungen erfüllt sind (Standard: "Wecker aktiv")
+   - **Vorlauf-Aktionen**: Optional, Aktionen die vor dem Wecken ausgeführt werden
+   - **Weck-Aktionen**: Aktionen die bei der Weckzeit ausgeführt werden
+   - **Debug-Modus**: Optional, aktiviert Debug-Ausgaben
 
 ## Beispiele
 
