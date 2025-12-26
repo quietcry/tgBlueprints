@@ -1,0 +1,831 @@
+
+
+
+blueprint:
+  name: WakeUp Status
+  description: Überwacht Weckzeiten (wie Handyuhr) mit optionaler Vorlaufzeit, Person-Zuordnung und Bedingungslisten
+  domain: automation
+  input:
+    input_text_status:
+      name: Input Text - Status
+      description: Input Text Entity für den Status-Text
+      default: "-"
+      selector:
+        entity:
+          domain: input_text
+    debugmode:
+      name: Debug-Modus
+      description: Aktiviert Debug-Ausgaben für Fehlersuche
+      default: false
+      selector:
+        boolean:
+    person_1:
+      name: Person
+      description: Person Entity die überwacht werden soll
+      default: "-"
+      selector:
+        entity:
+          domain: person
+    person_status_pattern_1:
+      name: Person Status Pattern
+      description: "Muster für Person-Status (z.B. 'home', 'not_home') - wird als String-Vergleich verwendet"
+      default: "home"
+      selector:
+        text:
+    wakeup_time_sensor_1:
+      name: Weckzeit-Sensor
+      description: Sensor Entity die die Weckzeit enthält (kann GMT oder Lokalzeit sein)
+      default: "-"
+      selector:
+        entity:
+          domain: sensor
+    pre_wake_duration_1:
+      name: Vorlaufzeit
+      description: "Optionale Vorlaufzeit vor dem Wecken (z.B. für Bad heizen, Kaffee kochen)"
+      default:
+        hours: 0
+        minutes: 0
+        seconds: 0
+      selector:
+        duration:
+    post_wake_duration_1:
+      name: Nachlaufzeit
+      description: "Optionale Nachlaufzeit nach dem Wecken (z.B. für Status-Anzeige nach dem Aufstehen)"
+      default:
+        hours: 0
+        minutes: 0
+        seconds: 0
+      selector:
+        duration:
+    use_local_time_1:
+      name: Use Local Time
+      description: Use Local Time for the wakeup time sensor
+      default: false
+      selector:
+        boolean:
+    wakeup_time_offset_1:
+      name: Weckzeit-Offset
+      description: "Optionaler Offset in Minuten zur Korrektur des Sensor-Versatzes (z.B. 5 für +5 Minuten, -5 für -5 Minuten)"
+      default: 0
+      selector:
+        number:
+          min: -60
+          max: 60
+          step: 1
+          unit_of_measurement: Minuten
+    entities_must_be_on_1:
+      name: Entities die ON sein müssen
+      description: Liste von Input Boolean oder Switch Entities die "on" sein müssen
+      default: []
+      selector:
+        entity:
+          multiple: true
+          domain:
+            - input_boolean
+            - switch
+    entities_must_be_off_1:
+      name: Entities die OFF sein müssen
+      description: Liste von Input Boolean oder Switch Entities die "off" sein müssen
+      default: []
+      selector:
+        entity:
+          multiple: true
+          domain:
+            - input_boolean
+            - switch
+    status_text_1:
+      name: Status-Text
+      description: Text der angezeigt wird, wenn alle Bedingungen erfüllt sind
+      default: "-"
+      selector:
+        text:
+
+variables:
+  statusfield: !input input_text_status
+  debugmode: !input debugmode
+  
+  tmp_inputs:
+    - person_status_pattern: !input person_status_pattern_1
+      status_text: !input status_text_1
+      pre_wake_duration: !input pre_wake_duration_1
+      post_wake_duration: !input post_wake_duration_1
+      use_local_time: !input use_local_time_1
+      wakeup_time_offset: !input wakeup_time_offset_1
+      observed_device:
+        person: !input person_1
+        wakeup_time_sensor: !input wakeup_time_sensor_1
+        entities_must_be_on: !input entities_must_be_on_1
+        entities_must_be_off: !input entities_must_be_off_1
+  
+  processed_inputs: >-
+    {% macro convert_string_to_normalized_array(value) %}
+      {# Konvertiere person_status_pattern zu Array - splitte an Komma UND Leerzeichen (Regex), trimme Whitespace und normalisiere zu lowercase #}
+      {% set pattern_array = [] %}
+      {% set value_str = value|string|trim|lower %}
+      {# Ersetze alle Whitespace-Zeichen durch Kommas, dann splitte am Komma #}
+      {% set normalized_str = value_str|regex_replace('[\s,]+', ',') %}
+      {# Entferne führende/abschließende Kommas #}
+      {% set normalized_str = normalized_str|regex_replace('^,|,$', '') %}
+      {# Ersetze alle mehrfachen Kommas durch ein Komma #}
+      {% set normalized_str = normalized_str|regex_replace(',+', ',') %}
+      {% set pattern_array = normalized_str.split(',') %}
+      {{- pattern_array|to_json -}}
+    {% endmacro %}
+    
+    {# 
+      Makro: validate_entities
+      
+      Beschreibung:
+      Validiert eine Liste von Home Assistant Entities und gibt nur die existierenden und gültigen Entities zurück.
+      
+      Parameter:
+      - field_value: Ein einzelner Entity-String, ein Array von Entities, oder ein leerer String/Array
+      
+      Rückgabewert:
+      - JSON-String eines Arrays mit validierten Entities
+      
+      Validierung:
+      - Entities müssen existieren (haben ein friendly_name Attribut)
+      - Entities dürfen nicht 'unavailable' sein (aber 'unknown' ist erlaubt)
+      - Leere Strings ('') und '-' werden ignoriert
+      - Nicht existierende Entities werden ausgeschlossen
+      
+      Beispiel:
+      {% set valid = validate_entities("person.tommy")|from_json %}
+      {% set valid = validate_entities(["person.tommy", "sensor.temp"])|from_json %}
+      {% set valid = validate_entities("-")|from_json %}  # gibt [] zurück
+    #}
+    {% macro validate_entities(field_value) %}
+      {% set ns_field = namespace(valid_entities=[], value_array=[]) %}
+      {# Konvertiere Eingabe zu Array #}
+      {% if field_value is iterable and field_value is not string %}
+        {% set ns_field.value_array = field_value %}
+      {% elif field_value %}
+        {% set ns_field.value_array = [field_value] %}
+      {% endif %}
+    
+      {# Validiere jede Entity #}
+      {% for entity in ns_field.value_array %}
+        {% if entity and entity != '-' and entity != '' %}
+          {% set entity_state = states(entity) %}
+          {# Prüfe ob Entity existiert: State muss nicht 'unavailable' sein UND mindestens ein Attribut muss existieren #}
+          {% set entity_friendly_name = state_attr(entity, 'friendly_name') %}
+          {% if entity_state != 'unavailable' and entity_friendly_name is not none %}
+            {% set ns_field.valid_entities = ns_field.valid_entities + [entity] %}
+          {% endif %}
+        {% endif %}
+      {% endfor %}
+    
+      {{- ns_field.valid_entities|to_json -}}
+    {% endmacro %}
+    
+    
+    {% set ns = namespace(result=[], cleaned_item={}, cleaned_observed_device={}, observed_device_list=[]) %}
+    {% for input_item in tmp_inputs %}
+      {% set ns.cleaned_item = {} %}
+      {% for item_key, item_value in input_item.items() %}
+      
+        {# person_status_pattern - konvertiere zu Array #}
+        {% if item_key == 'person_status_pattern' %}
+          {% set pattern_array = convert_string_to_normalized_array(item_value)|from_json %}
+          {% set ns.cleaned_item = dict(ns.cleaned_item, **{'person_status_pattern': pattern_array}) %}
+        
+        {# post_wake_duration - berechne Gesamtmillisekunden #}
+        {% elif item_key == 'post_wake_duration' %}
+          {# Berechne Gesamtmillisekunden aus hours, minutes, seconds #}
+          {% set total_milliseconds = 0 %}
+          {% if item_value and item_value is mapping %}
+            {% set hours = item_value.hours|int(default=0) %}
+            {% set minutes = item_value.minutes|int(default=0) %}
+            {% set seconds = item_value.seconds|int(default=0) %}
+            {% set total_milliseconds = hours * 3600 * 1000 + minutes * 60 * 1000 + seconds * 1000 %}
+          {% endif %}
+          {% set ns.cleaned_item = dict(ns.cleaned_item, **{'post_wake_duration': total_milliseconds}) %}
+        
+        {# pre_wake_duration - berechne Gesamtmillisekunden #}
+        {% elif item_key == 'pre_wake_duration' %}
+          {# Berechne Gesamtmillisekunden aus hours, minutes, seconds #}
+          {% set total_milliseconds = 0 %}
+          {% if item_value and item_value is mapping %}
+            {% set hours = item_value.hours|int(default=0) %}
+            {% set minutes = item_value.minutes|int(default=0) %}
+            {% set seconds = item_value.seconds|int(default=0) %}
+            {% set total_milliseconds = hours * 3600 * 1000 + minutes * 60 * 1000 + seconds * 1000 %}
+          {% endif %}
+          {% set ns.cleaned_item = dict(ns.cleaned_item, **{'pre_wake_duration': total_milliseconds}) %}
+        
+        {# status_text, use_local_time und wakeup_time_offset einfach übernehmen #}
+        {% elif item_key == 'status_text' %}
+          {% set ns.cleaned_item = dict(ns.cleaned_item, **{'status_text': item_value}) %}
+        {% elif item_key == 'use_local_time' %}
+          {% set ns.cleaned_item = dict(ns.cleaned_item, **{'use_local_time': item_value}) %}
+        {% elif item_key == 'wakeup_time_offset' %}
+          {# Konvertiere Offset von Minuten zu Millisekunden #}
+          {% set offset_minutes = item_value|int(default=0) %}
+          {% set offset_milliseconds = offset_minutes * 60 * 1000 %}
+          {% set ns.cleaned_item = dict(ns.cleaned_item, **{'wakeup_time_offset': offset_milliseconds}) %}
+        
+        {# observed_device - verarbeite alle Felder #}
+        {% elif item_key == 'observed_device' %}
+          {% set ns.cleaned_observed_device = {} %}
+          {% for device_key, device_value in item_value.items() %}
+            {# Makro prüft selbst ob Wert '-' oder '' ist #}
+            {% set valid_entities = validate_entities(device_value)|from_json %}
+            {% set ns.observed_device_list = ns.observed_device_list + valid_entities %}
+            {% set ns.cleaned_observed_device = dict(ns.cleaned_observed_device, **{device_key: valid_entities}) %}
+          {% endfor %}
+          {% set ns.cleaned_item = dict(ns.cleaned_item, **{item_key: ns.cleaned_observed_device}) %}
+        {% endif %}
+      {% endfor %}
+      
+      {% set ns.result = ns.result + [ns.cleaned_item] %}
+    {% endfor %}
+    
+    {{- {'cleaned_inputs': ns.result, 'observed_device_list': ns.observed_device_list}|to_json -}}
+    
+    
+    
+    
+    
+    
+    
+    
+  
+  cleaned_inputs: >-
+    {% set processed_inputs_parsed = processed_inputs|from_json %}
+    {{- processed_inputs_parsed.cleaned_inputs|to_json -}}
+  
+  observed_devices: >-
+    {% set processed_inputs_parsed = processed_inputs|from_json %}
+    {{- processed_inputs_parsed.observed_device_list|to_json -}}
+  
+  test: test
+
+trigger:
+  # Zeitbasierter Trigger - prüft minütlich ob Weckzeit erreicht ist
+  - platform: time_pattern
+    minutes: "/1"
+    id: time_check
+  - platform: homeassistant
+    event: start
+    id: haStart
+
+  
+  - platform: event
+    event_type: state_changed
+    id: statechanged
+    variables:
+      triggerdevice: "{{- {'id':trigger.event.data.entity_id} }}"
+
+condition:
+  - condition: or
+    conditions:
+      # Zeitbasierter Trigger (time_check) wird immer durchgelassen
+      - condition: trigger
+        id: time_check
+      # ODER: state_changed Trigger - nur wenn Entity in cleaned_inputs enthalten ist
+      # ODER: state_changed Trigger - nur wenn Entity in cleaned_inputs enthalten ist
+      - condition: and
+        conditions:
+          - condition: trigger
+            id: statechanged
+          - condition: template
+            value_template: >-
+              {% set triggered_entity = triggerdevice.id if triggerdevice is defined and triggerdevice.id is defined else none %}
+              {% if triggered_entity and observed_devices is defined %}
+                {{- triggered_entity in observed_devices -}}
+              {% else %}
+                false
+              {% endif %}
+
+action:
+  - variables:
+      evaluated_result: >-
+        {# ___________________________________________________ #}
+        {# Makro: pad_number
+           Beschreibung: Formatiert eine Zahl mit führenden Nullen (zfill Alternative)
+           
+           Parameter:
+           - value: Die zu formatierende Zahl (int oder string)
+           - width: Die gewünschte Mindestbreite (Standard: 2)
+           
+           Rückgabe: String mit führenden Nullen
+           
+           Beispiel:
+           - pad_number(5, 2) -> "05"
+           - pad_number(12, 2) -> "12"
+           - pad_number(3, 3) -> "003"
+        #}
+        {%- macro pad_number(value, width=2) -%}
+          {%- set num = value|int(default=0) -%}
+          {%- set num_str = num|string -%}
+          {%- set current_length = num_str|length -%}
+          {%- if current_length < width -%}
+            {%- set padding_needed = width - current_length -%}
+            {%- for i in range(padding_needed) -%}
+              {%- set num_str = '0' ~ num_str -%}
+            {%- endfor -%}
+          {%- endif -%}
+          {{- num_str -}}
+        {%- endmacro -%}
+        {# ___________________________________________________ #}
+        
+        {# ___________________________________________________ #}
+        {# Makro: saver_get_variable_name
+           Beschreibung: Generiert einen eindeutigen Variablennamen für Saver basierend auf einem Identifier
+           
+           Parameter:
+           - identifier: Eindeutiger Identifier (z.B. Entity-ID wie "input_text.tgwakeupstatus" oder Automation-ID)
+           - prefix: Optionaler Präfix (Standard: "saved_results")
+           - suffix: Optionaler Suffix (Standard: "")
+           
+           Rückgabe: String mit Variablennamen oder leerer String wenn identifier nicht gesetzt
+           
+           Beispiel:
+           - saver_get_variable_name("input_text.tgwakeupstatus", "tgWakeUpStatus") -> "tgWakeUpStatus_input_text_tgwakeupstatus"
+           - saver_get_variable_name("automation.my_automation") -> "saved_results_automation_my_automation"
+        #}
+        {%- macro saver_get_variable_name(identifier, prefix="saved_results", suffix="") -%}
+          {%- if identifier is defined and identifier != '' and identifier != none -%}
+            {%- set safe_name = identifier|replace('.', '_')|replace('-', '_') -%}
+            {%- if prefix != '' -%}
+              {%- set var_name = prefix ~ '_' ~ safe_name -%}
+            {%- else -%}
+              {%- set var_name = safe_name -%}
+            {%- endif -%}
+            {%- if suffix != '' -%}
+              {{- var_name ~ '_' ~ suffix -}}
+            {%- else -%}
+              {{- var_name -}}
+            {%- endif -%}
+          {%- else -%}
+            {{- '' -}}
+          {%- endif -%}
+        {%- endmacro -%}
+        {# ___________________________________________________ #}
+        
+        {# ___________________________________________________ #}
+        {# Makro: saver_load
+           Beschreibung: Lädt eine Variable aus Saver und gibt sie als JSON-String zurück
+           
+           Parameter:
+           - variable_name: Der Name der Saver-Variable (z.B. "my_variable_name")
+           
+           Rückgabe: JSON-String oder leeres Array [] (als JSON-String) wenn:
+           - Saver nicht installiert ist
+           - Variable nicht existiert
+           - Variable ungültig/leer ist
+           
+           Beispiel:
+           - saver_load("my_variable_name")
+        #}
+        {%- macro saver_load(variable_name) -%}
+          {%- if variable_name is defined and variable_name != '' and variable_name != none -%}
+            {# Verwende saver_variable() Funktion statt states() #}
+            {%- set saver_value = saver_variable(variable_name) -%}
+            {%- if saver_value is defined and saver_value != 'unknown' and saver_value != 'unavailable' and saver_value != '' and saver_value is not none -%}
+              {# saver_value ist bereits ein JSON-String von Saver, direkt zurückgeben #}
+              {{- saver_value -}}
+            {%- else -%}
+              {{- []|to_json -}}
+            {%- endif -%}
+          {%- else -%}
+            {{- []|to_json -}}
+          {%- endif -%}
+        {%- endmacro -%}
+        {# ___________________________________________________ #}
+        
+        
+        {# internes Makro - prüft ob current_timestamp im Zeitfenster liegt und gibt input_item mit window_start/window_end zurück #}
+        {% macro check_time_window(input_item, current_timestamp) %}
+          {% set wakeup_time = input_item.wakeup_time|int(default=0) %}
+          {% set pre_wake_duration = input_item.pre_wake_duration|int(default=0) %}
+          {% set post_wake_duration = input_item.post_wake_duration|int(default=0) %}
+          {% set window_start = 0 %}
+          {% set window_end = 0 %}
+          {% set is_in_window = false %}
+          {% set wakeup_time_readable = '' %}
+          {% set window_start_readable = '' %}
+          {% set window_end_readable = '' %}
+          {% set current_timestamp_readable = '' %}
+          {% if wakeup_time > 0 %}
+            {% set window_start = wakeup_time - pre_wake_duration %}
+            {% set window_end = wakeup_time + post_wake_duration %}
+            {% set is_in_window = current_timestamp >= window_start and current_timestamp <= window_end %}
+            {# Konvertiere Timestamps zu lesbaren ISO-8601 Strings (Millisekunden zu Sekunden für timestamp()) #}
+            {% set wakeup_time_readable = (wakeup_time / 1000)|timestamp_custom('%Y-%m-%d %H:%M:%S', default='') %}
+            {% set window_start_readable = (window_start / 1000)|timestamp_custom('%Y-%m-%d %H:%M:%S', default='') %}
+            {% set window_end_readable = (window_end / 1000)|timestamp_custom('%Y-%m-%d %H:%M:%S', default='') %}
+            {% set current_timestamp_readable = (current_timestamp / 1000)|timestamp_custom('%Y-%m-%d %H:%M:%S', default='') %}
+          {% endif %}
+          {% set statustext = input_item.status_text if input_item.status_text is defined and is_in_window == true else '' %}
+          {% set input_item = dict(input_item, **{'window_start': window_start, 
+                                                  'window_end': window_end, 
+                                                  'is_in_window': is_in_window, 
+                                                  'calculated_status_text': statustext, 
+                                                  'wakeup_time_readable': wakeup_time_readable, 
+                                                  'window_start_readable': window_start_readable, 
+                                                  'window_end_readable': window_end_readable, 
+                                                  'current_timestamp_readable': current_timestamp_readable}) %}
+          {{- input_item|to_json -}}
+        {% endmacro %}
+        
+        {# internes Makro - prüft ob ein Item mit gleichem loop_index UND wakeup_time bereits im save_array existiert #}
+        {% macro check_item_exists_in_save_array(input_item, save_array) %}
+          {% set ns_check = namespace(item_exists=false) %}
+          {% set loop_index = input_item.loop_index|int(default=-1) %}
+          {% set wakeup_time = input_item.wakeup_time|int(default=-1) %}
+          {% if loop_index >= 0 and wakeup_time >= 0 and save_array is defined and save_array is iterable and save_array is not string %}
+            {% for existing_item in save_array %}
+              {% if ns_check.item_exists == false %}
+                {% set existing_loop_index = existing_item.loop_index|int(default=-1) %}
+                {% set existing_wakeup_time = existing_item.wakeup_time|int(default=-1) %}
+                {% if existing_loop_index == loop_index and existing_wakeup_time == wakeup_time %}
+                  {% set ns_check.item_exists = true %}
+                {% endif %}
+              {% endif %}
+            {% endfor %}
+          {% endif %}
+          {{- ns_check.item_exists -}}
+        {% endmacro %}
+        
+        {# internes Makro - prüft ob alle Entities in einem Array den gleichen State haben #}
+        {% macro check_entities_state_isSameInArray(entity_array, desired_state) %}
+          {% set all_match = true %}
+          {% if entity_array is defined and entity_array is iterable and entity_array is not string and entity_array|length > 0 %}
+            {% for entity in entity_array %}
+              {% if all_match %}
+                {% set entity_state = states(entity) %}
+                {% if entity_state != desired_state %}
+                  {% set all_match = false %}
+                {% endif %}
+              {% endif %}
+            {% endfor %}
+          {% endif %}
+          {{- all_match -}}
+        {% endmacro %}
+        
+        {# internes Makro - verarbeitet wakeup_time_sensor und berechnet alle benötigten Werte #}
+        {# Unterscheidet drei Zustände:
+           1. Wecker existiert und ist valid (exists=true, is_valid=true)
+              -> is_valid=true bedeutet: Sensor existiert und State ist gültig (wakeup_time konnte berechnet werden)
+           2. Wecker existiert und ist nicht valid (exists=true, is_valid=false)
+              -> Sensor existiert, aber State ist ungültig ODER wakeup_time konnte nicht berechnet werden
+           3. Wecker existiert nicht (exists=false, is_valid=false)
+        #}
+        {% macro process_wakeup_time_sensor(wakeup_sensor, loop_result) %}
+          {% set ns_wakeup = namespace(loop_result=loop_result, exists=false, is_valid=false, device_timezone_raw="", device_id=none, device_timezone=none, wakeup_time_value_timestamp=0, timezone_pattern="GMT", sensor_state='unknown') %}
+          {# Prüfe ob Sensor existiert (unabhängig von Auslöselogik) #}
+          {% set sensor_friendly_name = state_attr(wakeup_sensor, 'friendly_name') %}
+          {% set ns_wakeup.exists = sensor_friendly_name is not none %}
+          {% set ns_wakeup.sensor_state = states(wakeup_sensor) %}
+          {% if ns_wakeup.exists %}
+            {# Sensor existiert - prüfe ob State gültig ist #}
+            {% if ns_wakeup.sensor_state != 'unknown' and ns_wakeup.sensor_state != 'unavailable' %}
+              {% set ns_wakeup.is_valid = true %}
+              {# Berechne Timestamp aus State (immer vorhanden) - konvertiere ISO-8601 String zu Millisekunden #}
+              {# as_timestamp() gibt UTC-Timestamp zurück, wir speichern auch den originalen State-String für use_local_time #}
+              {% set ns_wakeup.wakeup_time_value_timestamp = (ns_wakeup.sensor_state|as_timestamp(default=0) * 1000)|int %}
+              {% set ns_wakeup.sensor_state_iso = ns_wakeup.sensor_state|string %}
+              {# Prüfe ob Timestamp gültig ist #}
+              {% if ns_wakeup.wakeup_time_value_timestamp > 0 %}
+                {% set ns_wakeup.loop_result = dict(ns_wakeup.loop_result, **{'wakeup_time_timestamp': ns_wakeup.wakeup_time_value_timestamp}) %}
+                {# Ermittle Geräte-Zeitzone - sammle alle möglichen Quellen #}
+                {% set ns_wakeup.device_id = device_id(wakeup_sensor) %}
+                {# Versuche 1: Prüfe ob Gerät einen current_time_zone Sensor hat #}
+                {% if ns_wakeup.timezone_pattern not in ns_wakeup.device_timezone_raw and ns_wakeup.device_id is not none %}
+                  {% set device_entities = device_entities(ns_wakeup.device_id) %}
+                  {% if device_entities is iterable %}
+                    {% for entity in device_entities %}
+                      {% if entity is string and 'current_time_zone' in entity|lower %}
+                        {% set ns_wakeup.device_timezone_raw = state_attr(entity, 'time_zone_short')|string %}
+                      {% endif %}
+                    {% endfor %}
+                  {% endif %}
+                {% endif %}
+                {# Versuche 2: Direkt aus device_attr (falls current_time_zone Sensor nicht gefunden) #}
+                {% if ns_wakeup.timezone_pattern not in ns_wakeup.device_timezone_raw and ns_wakeup.device_id is not none%}
+                  {% set ns_wakeup.device_timezone_raw = device_attr(wakeup_sensor, 'timezone')|string %}
+                {% endif %}
+                {# Versuche 3: Aus Local Time Attribut (falls vorhanden) #}
+                {% if ns_wakeup.timezone_pattern not in ns_wakeup.device_timezone_raw %}
+                  {% set ns_wakeup.device_timezone_raw = state_attr(wakeup_sensor, 'Local Time')|string %}
+                {% endif %}
+                {# Versuche 4: Fallback - Verwende Server-Zeitzone als GMT-String #}
+                {% if ns_wakeup.timezone_pattern not in ns_wakeup.device_timezone_raw %}
+                  {% set tz_offset_str = now().strftime('%z') %}
+                  {% if tz_offset_str and tz_offset_str|length >= 5 %}
+                    {# %z gibt Format +HHMM oder -HHMM, füge GMT davor und Doppelpunkt zwischen Stunden und Minuten ein #}
+                    {% set ns_wakeup.device_timezone_raw = ns_wakeup.timezone_pattern ~ tz_offset_str|regex_replace('([+-])(\\d{2})(\\d{2})', '\\1\\2:\\3') %}
+                  {% endif %}
+                {% endif %}
+                {# Extrahiere Zeitzone am Ende einheitlich aus allen Quellen #}
+                {% if ns_wakeup.timezone_pattern in ns_wakeup.device_timezone_raw %}
+                  {% set tz_str = ns_wakeup.device_timezone_raw|string %}
+                  {# Suche nach GMT+XX:XX oder GMT-XX:XX Pattern #}
+                  {% set gmt_match = tz_str|regex_findall('GMT([+-])(\\d{2}):(\\d{2})') %}
+                  {% if gmt_match and gmt_match|length > 0 %}
+                    {% set sign = gmt_match[0][0] %}
+                    {% set hours = gmt_match[0][1]|int(default=0) %}
+                    {% set minutes = gmt_match[0][2]|int(default=0) %}
+                    {# Format hours und minutes mit führenden Nullen #}
+                    {% set ns_wakeup.device_timezone = sign ~ pad_number(hours, 2) ~ ':' ~ pad_number(minutes, 2) %}
+                    {% set ns_wakeup.loop_result = dict(ns_wakeup.loop_result, **{'device_timezone': ns_wakeup.device_timezone}) %}
+                  {% endif %}
+                {% endif %}
+                {% set wakeup_time = calculate_wakeup_time_ms(ns_wakeup.loop_result)|int(default=0) %}
+                {% if wakeup_time > 0 %}
+                  {% set pre_wake_duration = ns_wakeup.loop_result.pre_wake_duration|int(default=0) %}
+                  {% set post_wake_duration = ns_wakeup.loop_result.post_wake_duration|int(default=0) %}
+                  {% set ns_wakeup.loop_result = dict(ns_wakeup.loop_result, **{'wakeup_time': wakeup_time, 'pre_wake_duration': pre_wake_duration, 'post_wake_duration': post_wake_duration}) %}
+                  {% set ns_wakeup.is_valid = true %}
+                {% else %}
+                  {# wakeup_time konnte nicht berechnet werden - Item ungültig #}
+                  {% set ns_wakeup.is_valid = false %}
+                {% endif %}
+              {% else %}
+                {# Timestamp konnte nicht berechnet werden - Item ungültig #}
+                {% set ns_wakeup.is_valid = false %}
+              {% endif %}
+            {% else %}
+              {# State ist unknown oder unavailable - Sensor existiert aber ist nicht valid #}
+              {% set ns_wakeup.is_valid = false %}
+            {% endif %}
+          {% else %}
+            {# Sensor existiert nicht - exists=false, is_valid=false (bereits gesetzt) #}
+          {% endif %}
+          {# Speichere Existenz- und State-Informationen im loop_result #}
+          {% set ns_wakeup.loop_result = dict(ns_wakeup.loop_result, **{'wakeup_time_sensor_exists': ns_wakeup.exists, 'wakeup_time_sensor_state': ns_wakeup.sensor_state}) %}
+          {{- ns_wakeup.loop_result|to_json -}}
+        {% endmacro %}
+        
+        {# internes Makro - berechnet die Wakeup-Zeit in Millisekunden #}
+        {% macro calculate_wakeup_time_ms(result) %}
+          {% if result.wakeup_time_timestamp is defined and result.wakeup_time_timestamp is not none and result.wakeup_time_timestamp != '' and result.wakeup_time_timestamp|int(default=0) > 0 %}
+            {% set wakeup_timestamp = result.wakeup_time_timestamp|int %}
+            {# Optionaler Offset zur Korrektur des Sensor-Versatzes (in Millisekunden) #}
+            {% set wakeup_time_offset = result.wakeup_time_offset|int(default=0) %}
+            {# Zeitzone-Korrektur nur bei use_local_time=true #}
+            {% if result.use_local_time is defined and result.use_local_time %}
+              {# Bei use_local_time=true: Extrahiere lokale Zeit aus ISO-8601 String und konvertiere zu aktueller Geräte-Zeitzone #}
+              {# Ziel: Lokale Zeit (z.B. 05:00 Uhr) beibehalten, auch wenn Zeitzone wechselt #}
+              {% set wakeup_tz_offset = 0 %}
+              {% set server_tz_offset = 0 %}
+              {# Aktuelle Geräte-Zeitzone (Format: +HH:MM oder -HH:MM) #}
+              {% if result.device_timezone is defined and result.device_timezone %}
+                {% set tz_str = result.device_timezone|string %}
+                {% set tz_match = tz_str|regex_findall('([+-])(\\d{2}):(\\d{2})') %}
+                {% if tz_match and tz_match|length > 0 %}
+                  {% set sign = tz_match[0][0] %}
+                  {% set hours = tz_match[0][1]|int(default=0) %}
+                  {% set minutes = tz_match[0][2]|int(default=0) %}
+                  {% set wakeup_tz_offset = (hours + minutes / 60.0) * (1 if sign == '+' else -1) %}
+                {% endif %}
+              {% endif %}
+              {# Server-Zeitzone (UTC-Offset in Stunden) #}
+              {% set now_local = now() %}
+              {% set now_utc = now().astimezone(utc) %}
+              {% set server_tz_offset = ((now_local - now_utc).total_seconds() / 3600) %}
+              {# wakeup_timestamp ist UTC, wir müssen zurück zur lokalen Zeit (Geräte-Zeitzone) und dann zu Server-Zeitzone #}
+              {# Schritt 1: UTC -> Geräte-Zeitzone (subtrahiere Geräte-Offset) #}
+              {# Schritt 2: Geräte-Zeitzone -> Server-Zeitzone (addiere Server-Offset) #}
+              {# Vereinfacht: UTC + (Server-Offset - Geräte-Offset) = UTC + Server-Offset - Geräte-Offset #}
+              {% set tz_diff_hours = server_tz_offset - wakeup_tz_offset %}
+              {{- (wakeup_timestamp + (tz_diff_hours * 3600 * 1000) + wakeup_time_offset)|int -}}
+            {% else %}
+              {# Bei use_local_time=false: Timestamp direkt verwenden (bereits UTC, wird als Server-Zeit interpretiert) + Offset #}
+              {{- (wakeup_timestamp + wakeup_time_offset)|int -}}
+            {% endif %}
+          {% else %}
+            0
+          {% endif %}
+        {% endmacro %}
+        
+        
+        {% set ns = namespace(result=none, loop_result=none, is_valid_item=false, debug=[], item_array=[] , save_array=[]) %}
+        {% set cleaned_inputs_parsed = cleaned_inputs|from_json  %}
+        {% set saver_enabled = statusfield is defined and statusfield != '' and statusfield != none %}
+        {% set saver_variable_name = saver_get_variable_name(statusfield, "tgWakeUpStatus", "saved_results") if saver_enabled else '' %}
+        {% set current_timestamp = (now().timestamp() * 1000)|int %}
+        {% set old_save_array_json = saver_load(saver_variable_name) if saver_enabled else '[{"loop_index": -1}]' %}
+        {% set old_save_array = old_save_array_json|from_json %}
+        {% for input_item in cleaned_inputs_parsed %}
+          {% set loop_index = loop.index0 %}
+          {% set ns.loop_result = dict(input_item, **{'loop_index': loop_index}) %}
+          {% for item_key, item_value in input_item.items() %}
+            {% if item_key == 'observed_device' %}
+              {% for device_key, device_value in item_value.items() %}
+                {% if device_key == 'entities_must_be_on' %}
+                  {% set is_valid_item = check_entities_state_isSameInArray(device_value, 'on')|bool %}
+                  {% set ns.loop_result = dict(ns.loop_result, **{'entities_must_be_on_state': is_valid_item}) %}
+                {% elif device_key == 'entities_must_be_off' %}
+                  {% set is_valid_item = check_entities_state_isSameInArray(device_value, 'off')|bool %}
+                  {% set ns.loop_result = dict(ns.loop_result, **{'entities_must_be_off_state': is_valid_item}) %}
+                {% elif device_key == 'person' %}
+                  {% set person = device_value[0] %}
+                  {% set person_state = states(person) %}
+                  {% set is_valid_item = true %}
+                  {% if person_state == 'unknown' or person_state == 'unavailable' or not (input_item.person_status_pattern|length == 0 or person_state in input_item.person_status_pattern) %}
+                    {% set is_valid_item = false %}
+                  {% endif %}
+                  {% set ns.loop_result = dict(ns.loop_result, **{'person_state': person_state, 'person_state_res': is_valid_item}) %}
+                {% elif device_key == 'wakeup_time_sensor' %}
+                  {% set wakeup_sensor = device_value[0] %}
+                  {# process_wakeup_time_sensor prüft Existenz, State und Validität #}
+                  {% set ns.loop_result = process_wakeup_time_sensor(wakeup_sensor, ns.loop_result)|from_json %}
+                {% endif %}
+              {% endfor %}
+            {% endif %}
+          {% endfor %}
+          {% set ns.item_array = ns.item_array + [ns.loop_result] %}
+        {% endfor %}
+        
+        
+        
+        {# Füge alte Items zu item_array hinzu (ohne vorherige Filterung) #}
+        {# Wenn Trigger haStart ist, leere old_save_array (Home Assistant Neustart) #}
+        {% if trigger.id is defined and trigger.id == 'haStart' %}
+          {% set old_save_array = [] %}
+        {% endif %}
+        {% set ns.item_array = ns.item_array + old_save_array %}
+        {# Prüfe alle Items (neue + alte) auf Zeitfenster #}
+        {% for input_item in ns.item_array %}
+          {% set ns.loop_result = input_item %}
+          {% set ns.is_valid_item = true %}
+          {% set ns.debug = ns.debug + [input_item] %}
+          {# Prüfe ob Item noch im Zeitfenster ist #}
+          {% if input_item.entities_must_be_on_state|bool(default=false) and 
+                input_item.entities_must_be_off_state|bool(default=false) and 
+                input_item.person_state_res|bool(default=false) and
+                input_item.wakeup_time_sensor_exists|bool(default=false) %}
+            {% set input_item = check_time_window(input_item, current_timestamp)|from_json %}
+            {% if input_item.is_in_window|bool(default=false) %}
+              {# Prüfe ob bereits ein Item mit dem gleichen loop_index UND wakeup_time in save_array existiert #}
+              {% if not check_item_exists_in_save_array(input_item, ns.save_array)|bool(default=false) %}
+                {% set ns.save_array = ns.save_array + [input_item] %}
+              {% endif %}
+              {% if ns.result is none or ns.result == '' %}
+                {% set ns.result = input_item %}
+              {% elif ns.result.window_start < input_item.window_start or ns.result.window_end > input_item.window_end %}
+                {% set ns.result = input_item %}
+              {% endif %}
+            {% endif %}
+          {% endif %}
+        {% endfor %}
+        {% if ns.result is none or ns.result == '' %}
+          {% set ns.result = {'calculated_status_text': "-"} %}
+        {% endif %}
+        {% set ns.debug = {'items': ns.debug, 'saved_items': ns.save_array, 'item_array': ns.item_array, 'old_save_array': old_save_array, 'result': ns.result} %}
+        {{- {'result': ns.result, 
+            'save_array': ns.save_array, 
+            'saver_variable_name': saver_variable_name, 
+            'debug': ns.debug,
+            }|to_json -}}
+        
+        
+        
+        
+        
+      my_dbgMessage: >-
+        {% set parsed_evaluated = evaluated_result|from_json if evaluated_result is defined and evaluated_result != '' else {} %}
+        {% set debug_data = {'statusfield': statusfield, 'debugmode': debugmode, 'cleaned_inputs': cleaned_inputs, 'observed_devices': observed_devices} %}
+        {% if parsed_evaluated is mapping %}
+          {% set debug_data = dict(debug_data, **{'evaluated_result': parsed_evaluated}) %}
+        {% endif %}
+        {{- debug_data|to_json }}
+
+  
+  - if:
+      - condition: template
+        value_template: "{{- statusfield and statusfield != '' and states(statusfield) != 'unavailable' -}}"
+    then:
+      - variables:
+          evaluated_status_text: >-
+            {% if evaluated_result is defined and evaluated_result is not none and evaluated_result != '' %}
+              {% set parsed = evaluated_result|from_json %}
+              {% if parsed is mapping and parsed.result is defined and parsed.result is mapping and parsed.result.calculated_status_text is defined %}
+                {{- parsed.result.calculated_status_text -}}
+              {% else %}
+                {{- none -}}
+              {% endif %}
+            {% else %}
+              {{- none -}}
+            {% endif %}
+            
+      # Saver: Speichere save_array (nur wenn statusfield gesetzt ist und Saver verfügbar ist)
+      - if:
+          - condition: template
+            value_template: "{{- states('saver.saver') != 'unavailable' and states('saver.saver') != 'unknown' -}}"
+          - condition: template
+            value_template: >-
+              {{- evaluated_result is defined and evaluated_result is not none and evaluated_result != '' -}}
+        then:
+          - variables:
+              saver_variable_name: >-
+                {% set parsed = evaluated_result|from_json %}
+                {% if parsed is mapping and parsed.saver_variable_name is defined %}
+                  {{- parsed.saver_variable_name -}}
+                {% else %}
+                  {{- '' -}}
+                {% endif %}
+              saver_value_json: >-
+                {% set parsed = evaluated_result|from_json %}
+                {% if parsed is mapping and parsed.save_array is defined and parsed.save_array is iterable %}
+                  {{- parsed.save_array|to_json -}}
+                {% else %}
+                  {{- []|to_json -}}
+                {% endif %}
+          - service: saver.set_variable
+            data:
+              name: "{{- saver_variable_name -}}"
+              value: "{{- saver_value_json -}}"
+      
+        
+      - if:
+          - condition: template
+            value_template: "{{- evaluated_status_text is defined -}}"
+        then:
+          - action: input_text.set_value
+            target:
+              entity_id: "{{- statusfield -}}"
+            data:
+              value: "{{- evaluated_status_text -}}"
+  
+  
+  
+
+
+  # Debug - Message
+  - if:
+      - condition: template
+        value_template: "{{- debugmode and my_dbgMessage is defined and my_dbgMessage != '' }}"
+    then:
+      - action: notify.persistent_notification
+        metadata: {}
+        data:
+          title: "Debug TgWakeUpStatus"
+          message: >-
+            {# ___________________________________________________ #}
+            {%- macro dumpToHTML(val, filter=[], maxSteps=3, testJson=false, details=0, thisStep=0) -%}
+              {%- set patternMap = '^[\s]*\{[\S\s]*\}[\s]*$' -%}
+              {%- set patternList = '^[\s]*\[[\S\s]*\][\s]*$' -%}
+            
+              {%- set dump = namespace() -%} 
+              {%- set dump.tmp="" -%}
+              {%- set dump.val=val -%}
+              {%- set dump.valType=none -%}
+              {%- set myFilter=filter -%}
+              {%- set filter=[] -%}
+              {%- set thisStep=thisStep + 1 -%}
+              
+              {%- if thisStep > maxSteps -%}
+                {%- if dump.val is list or dump.val is mapping -%} {%- set dump.tmp = dump.val|to_json -%} {%- else -%} {%- set dump.tmp = dump.val -%} {%- endif -%}
+                {%- set dump.valType="json" -%}
+              {%- else -%}
+                {%- if dump.val is string and testJson == true and ( dump.val is search(patternMap) or dump.val is search(patternList) )-%}
+                  {%- set dump.val=dump.val|replace("'", '"')|from_json -%}
+                {%- endif -%}
+                {%- if dump.val is list -%}
+                  {%- set dump.valType="list" -%}
+                  {%- set dump.tmp = dump.tmp ~ "<ul>" -%} 
+                  {%- for item in dump.val -%}
+                    {%- set myDump = dumpToHTML(item, filter, maxSteps, testJson, details, thisStep)|from_json -%}
+                    {%- set dump.tmp = dump.tmp ~ "<li>" ~ myDump[1] ~ "</li>" -%}
+                  {%- endfor -%}
+                  {%- set dump.tmp = dump.tmp ~ "</ul>" -%} 
+                {%- elif dump.val is mapping -%}
+                  {%- set dump.valType="dict" -%}
+                  {%- set dump.tmp = dump.tmp ~ "<ul>" -%} 
+                  {%- for name, item in dump.val.items() -%}
+                    {%- if thisStep > 1 or name not in myFilter -%}
+                      {%- set preTxt = "<li>" -%}
+                      {%- set postTxt = "</li>" -%}
+                      {%- set nameTxtStart = "<b>" -%}
+                      {%- set NameTxtEnd = "</b>" -%}
+                      {%- set myDump = dumpToHTML(item, filter, maxSteps, testJson, details, thisStep)|from_json -%}
+                      {%- if details == thisStep and myDump[0] == "dict" -%}
+                        {%- set preTxt = preTxt ~ "<details>" -%}
+                        {%- set postTxt = "</details>" ~ postTxt -%}
+                        {%- set nameTxtStart = "<summary>" ~ nameTxtStart -%}
+                        {%- set NameTxtEnd = NameTxtEnd ~ "</summary>" -%}
+                      {%- endif -%}
+            
+                      {%- set dump.tmp = dump.tmp ~ preTxt ~ nameTxtStart ~ name ~ ": " ~ NameTxtEnd ~ myDump[1] ~ postTxt -%}
+                    {%- endif -%}
+                  {%- endfor -%}
+                  {%- set dump.tmp = dump.tmp ~ "</ul>" -%} 
+                {%- elif dump.val is string or dump.val is number -%}
+                  {%- set dump.tmp = dump.tmp ~ " " ~ dump.val ~ "" -%} 
+                  {%- set dump.valType="string" -%}
+                {%- endif -%}
+              {%- endif -%}
+            
+              {%- if thisStep == 1 -%}
+                {{- dump.tmp -}}
+              {%- else -%}
+                {{- [dump.valType, dump.tmp]|to_json -}}
+              {%- endif -%}
+            {%- endmacro -%}
+            {{- "Debug Message:" ~ dumpToHTML(my_dbgMessage, [], 5, true, 2) }}
+
+mode: queued
