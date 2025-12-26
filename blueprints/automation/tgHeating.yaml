@@ -522,28 +522,36 @@ variables:
     {%- macro observer(key, itemlist) -%}
       {%- set ns.myEntitiesTmp = {} -%}
       {%- set ns.preparedItemlist = [] -%}
-      {%- for classkey, item in ns.myEntities.items() -%}
-        {%- if classkey != key -%}    
-          {%- set items = {classkey:item} -%}
-          {%- set ns.myEntitiesTmp = dict(ns.myEntitiesTmp, **items) -%}
-        {% else %}
-          {%- set ns.preparedItemlist = item -%}
-        {%- endif -%}
-      {%- endfor -%}
+      {%- if ns.myEntities is mapping -%}
+        {%- for classkey, item in ns.myEntities.items() -%}
+          {%- if classkey != key -%}    
+            {%- set items = {classkey:item} -%}
+            {%- set ns.myEntitiesTmp = dict(ns.myEntitiesTmp, **items) -%}
+          {% else %}
+            {%- if item is list -%}
+              {%- set ns.preparedItemlist = item -%}
+            {%- elif item is string -%}
+              {%- set ns.preparedItemlist = [item] -%}
+            {%- endif -%}
+          {%- endif -%}
+        {%- endfor -%}
+      {%- endif -%}
       
-      {%- if itemlist is string -%}
+      {%- if itemlist is none -%}
+        {# itemlist ist None, nichts zu tun #}
+      {%- elif itemlist is string and itemlist != "-" and itemlist|length > 0 -%}
         {%- set ns.preparedItemlist = ns.preparedItemlist + [itemlist] -%}
       
       {%- elif itemlist is mapping -%}
         {%- for item, val in itemlist.items() -%}
-          {%- if "device" in val  -%}
+          {%- if val is mapping and "device" in val  -%}
             {%- set ns.preparedItemlist = ns.preparedItemlist + [val.device] -%}
           {%- endif -%}
         {%- endfor -%}
         
       {%- elif itemlist is list -%}
         {%- for item in itemlist -%}
-          {%- if item is string -%}
+          {%- if item is string and item != "-" and item|length > 0 -%}
             {%- set ns.preparedItemlist = ns.preparedItemlist + [item] -%}
           {%- endif -%}
         {%- endfor -%}
@@ -574,17 +582,21 @@ variables:
       {%- endif -%}
     {%- endfor -%}
     {%- set status = observer("fader", var_temp_classes.values() | map(attribute="device")|list ) -%}
-    {%- for key, val in var_advanced_dev_config.items() -%}
-      {%- if val.faders is defined -%}
-        {%- for fader, faderval in val.faders.items() -%}
-          {%- if fader == "target" or fader == "overdrive" -%}
-            {%- set status = observer("overdrive",faderval)  -%}
-          {%- else -%}
-            {%- set status = observer("fader",faderval)  -%}
+    {%- if var_advanced_dev_config is mapping -%}
+      {%- for key, val in var_advanced_dev_config.items() -%}
+        {%- if val is mapping and val.faders is defined -%}
+          {%- if val.faders is mapping -%}
+            {%- for fader, faderval in val.faders.items() -%}
+              {%- if fader == "target" or fader == "overdrive" -%}
+                {%- set status = observer("overdrive",faderval)  -%}
+              {%- else -%}
+                {%- set status = observer("fader",faderval)  -%}
+              {%- endif -%}
+            {%- endfor -%}
           {%- endif -%}
-        {%- endfor -%}
-      {%- endif -%}
-    {%- endfor -%}
+        {%- endif -%}
+      {%- endfor -%}
+    {%- endif -%}
     
     
     {{- ns.myEntities -}}
@@ -2008,7 +2020,7 @@ action:
       # Weekplan set next timer    
       - if:
           - condition: template
-            value_template: "{{ 'weekplanes' in mySettings and mySettings.weekplanes.next is defined and mySettings.weekplanes.next is number}}"
+            value_template: "{{ 'weekplanes' in mySettings and mySettings.weekplanes.next is defined and mySettings.weekplanes.next is number and weekplan_timer and weekplan_timer != '-' and weekplan_timer|length > 0 }}"
         then:
           - action: timer.cancel
             metadata: {}
@@ -2035,7 +2047,7 @@ action:
             response_variable: statefile_write
       - if:
           - condition: template
-            value_template: "{{ 'statefile' in mySettings and mySettings.statefile.state == 'helper' and mySettings.statefile.output|length <= state_attr(inp_use_statehelper, 'max' )|int }}"
+            value_template: "{{ 'statefile' in mySettings and mySettings.statefile.state == 'helper' and inp_use_statehelper and inp_use_statehelper != '-' and inp_use_statehelper|length > 0 and mySettings.statefile.output|length <= state_attr(inp_use_statehelper, 'max' )|int }}"
         then:
           - action: input_text.set_value
             metadata: {}
@@ -2075,12 +2087,16 @@ action:
             - variables:
                 current_device: '{{  my_devices[repeat.index - 1].device }}'
   
-            - action: climate.set_hvac_mode
-              metadata: {}
-              data:
-                hvac_mode: auto
-              target:
-                device_id: "{{- my_devices[repeat.index - 1].deviceID -}}"
+            - if:
+                - condition: template
+                  value_template: "{{ my_devices[repeat.index - 1].deviceID and my_devices[repeat.index - 1].deviceID != '-' and my_devices[repeat.index - 1].deviceID|length > 0 }}"
+              then:
+                - action: climate.set_hvac_mode
+                  metadata: {}
+                  data:
+                    hvac_mode: auto
+                  target:
+                    device_id: "{{- my_devices[repeat.index - 1].deviceID -}}"
             - repeat:
                 while:
                   - condition: template
@@ -2095,12 +2111,16 @@ action:
                       seconds: 1
                       milliseconds: 0
           
-            - action: climate.set_preset_mode
-              alias: set Wochenprogramm
-              data:
-                preset_mode: '{{- "week_program_" ~ my_devices[repeat.index - 1].action -}}'
-              target:
-                device_id: "{{- my_devices[repeat.index - 1].deviceID -}}"
+            - if:
+                - condition: template
+                  value_template: "{{ my_devices[repeat.index - 1].deviceID and my_devices[repeat.index - 1].deviceID != '-' and my_devices[repeat.index - 1].deviceID|length > 0 }}"
+              then:
+                - action: climate.set_preset_mode
+                  alias: set Wochenprogramm
+                  data:
+                    preset_mode: '{{- "week_program_" ~ my_devices[repeat.index - 1].action -}}'
+                  target:
+                    device_id: "{{- my_devices[repeat.index - 1].deviceID -}}"
            
             
       # DEVICE: HM, SET: programm                
@@ -2130,18 +2150,26 @@ action:
       - repeat:
           count: "{{my_devices|length|int}}"
           sequence:
-            - action: climate.set_hvac_mode
-              metadata: {}
-              data:
-                hvac_mode: auto
-              target:
-                device_id: "{{- my_devices[repeat.index - 1].deviceID -}}"
-            - action: select.select_option
-              alias: Wochenprogramm
-              target:
-                device_id: "{{- my_devices[repeat.index - 1].subdevice -}}"
-              data:
-                option: '{{- "week_program_" ~ my_devices[repeat.index - 1].action -}}'
+            - if:
+                - condition: template
+                  value_template: "{{ my_devices[repeat.index - 1].deviceID and my_devices[repeat.index - 1].deviceID != '-' and my_devices[repeat.index - 1].deviceID|length > 0 }}"
+              then:
+                - action: climate.set_hvac_mode
+                  metadata: {}
+                  data:
+                    hvac_mode: auto
+                  target:
+                    device_id: "{{- my_devices[repeat.index - 1].deviceID -}}"
+            - if:
+                - condition: template
+                  value_template: "{{ my_devices[repeat.index - 1].subdevice and my_devices[repeat.index - 1].subdevice != '-' and my_devices[repeat.index - 1].subdevice|length > 0 }}"
+              then:
+                - action: select.select_option
+                  alias: Wochenprogramm
+                  target:
+                    device_id: "{{- my_devices[repeat.index - 1].subdevice -}}"
+                  data:
+                    option: '{{- "week_program_" ~ my_devices[repeat.index - 1].action -}}'
   
       # DEVICE: HM-IP HM, SET: off
   
@@ -2205,24 +2233,28 @@ action:
       - repeat:
           count: "{{my_devices|length|int}}"
           sequence:
-            - action: climate.turn_on
-              metadata: {}
-              data: {}
-              target:
-                entity_id: "{{- my_devices[repeat.index - 1].device -}}"
-            - action: climate.set_preset_mode
-              metadata: {}
-              data:
-                preset_mode: none
-              target:
-                entity_id: "{{- my_devices[repeat.index - 1].device -}}"
-            - action: climate.set_temperature
-              metadata: {}
-              data:
-                temperature: "{{- my_devices[repeat.index - 1].action|string -}}"
-                hvac_mode: heat
-              target:
-                entity_id: "{{- my_devices[repeat.index - 1].device -}}"     
+            - if:
+                - condition: template
+                  value_template: "{{ my_devices[repeat.index - 1].device and my_devices[repeat.index - 1].device != '-' and my_devices[repeat.index - 1].device|length > 0 }}"
+              then:
+                - action: climate.turn_on
+                  metadata: {}
+                  data: {}
+                  target:
+                    entity_id: "{{- my_devices[repeat.index - 1].device -}}"
+                - action: climate.set_preset_mode
+                  metadata: {}
+                  data:
+                    preset_mode: none
+                  target:
+                    entity_id: "{{- my_devices[repeat.index - 1].device -}}"
+                - action: climate.set_temperature
+                  metadata: {}
+                  data:
+                    temperature: "{{- my_devices[repeat.index - 1].action|string -}}"
+                    hvac_mode: heat
+                  target:
+                    entity_id: "{{- my_devices[repeat.index - 1].device -}}"     
   
   
       # DEVICE: not HM-IP not HM, SET: off
@@ -2253,11 +2285,15 @@ action:
       - repeat:
           count: "{{my_devices|length|int}}"
           sequence:
-            - action: climate.turn_off
-              metadata: {}
-              data: {}
-              target:
-                entity_id: "{{- my_devices[repeat.index - 1].device -}}"      
+            - if:
+                - condition: template
+                  value_template: "{{ my_devices[repeat.index - 1].device and my_devices[repeat.index - 1].device != '-' and my_devices[repeat.index - 1].device|length > 0 }}"
+              then:
+                - action: climate.turn_off
+                  metadata: {}
+                  data: {}
+                  target:
+                    entity_id: "{{- my_devices[repeat.index - 1].device -}}"      
   
       # DEVICE: not HM-IP not HM, SET: Temp
   
@@ -2287,24 +2323,28 @@ action:
       - repeat:
           count: "{{my_devices|length|int}}"
           sequence:
-            - action: climate.turn_on
-              metadata: {}
-              data: {}
-              target:
-                entity_id: "{{- my_devices[repeat.index - 1].device -}}"
-            - action: climate.set_preset_mode
-              metadata: {}
-              data:
-                preset_mode: none
-              target:
-                entity_id: "{{- my_devices[repeat.index - 1].device -}}"
-            - action: climate.set_temperature
-              metadata: {}
-              data:
-                temperature: "{{- my_devices[repeat.index - 1].action|string -}}"
-                hvac_mode: heat
-              target:
-                entity_id: "{{- my_devices[repeat.index - 1].device -}}"     
+            - if:
+                - condition: template
+                  value_template: "{{ my_devices[repeat.index - 1].device and my_devices[repeat.index - 1].device != '-' and my_devices[repeat.index - 1].device|length > 0 }}"
+              then:
+                - action: climate.turn_on
+                  metadata: {}
+                  data: {}
+                  target:
+                    entity_id: "{{- my_devices[repeat.index - 1].device -}}"
+                - action: climate.set_preset_mode
+                  metadata: {}
+                  data:
+                    preset_mode: none
+                  target:
+                    entity_id: "{{- my_devices[repeat.index - 1].device -}}"
+                - action: climate.set_temperature
+                  metadata: {}
+                  data:
+                    temperature: "{{- my_devices[repeat.index - 1].action|string -}}"
+                    hvac_mode: heat
+                  target:
+                    entity_id: "{{- my_devices[repeat.index - 1].device -}}"     
   
       # DEVICE: Overdrivers SET: Temp
   
@@ -2344,7 +2384,7 @@ action:
                       driver: "{{- drivers[repeat.index -1 ] -}}"
                   - if:
                       - condition: template
-                        value_template: '{{ driver is search("^input_number\.") }}'
+                        value_template: '{{ driver and driver != "-" and driver|length > 0 and driver is search("^input_number\.") }}'
                     then:
                       - action: input_number.set_value
                         metadata: {}
