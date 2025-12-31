@@ -150,7 +150,7 @@ Dieses Blueprint überwacht Weckzeiten (wie eine Handyuhr) und setzt einen Statu
 Klicke auf einen der folgenden Buttons, um das Blueprint direkt in Home Assistant zu importieren:
 
 **TG Schichtplan - Schichtprüfung:**
-[![Open your Home Assistant instance and show the blueprint import dialog with a specific blueprint pre-filled.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Fquietcry%2FtgBlueprints%2Fmain%2Fblueprints%2Fautomation%2Ftgshiftschedule.yaml)
+[![Open your Home Assistant instance and show the blueprint import dialog with a specific blueprint pre-filled.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Fquietcry%2FtgBlueprints%2Fmain%2Fblueprints%2Fautomation%2FtgShiftSchedule.yaml)
 
 **Extended Person States:**
 [![Open your Home Assistant instance and show the blueprint import dialog with a specific blueprint pre-filled.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Fquietcry%2FtgBlueprints%2Fmain%2Fblueprints%2Fautomation%2FtgPersonState.yaml)
