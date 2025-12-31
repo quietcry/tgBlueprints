@@ -1,0 +1,921 @@
+
+
+
+blueprint:
+  name: TG Schichtplan - Schichtprüfung
+  description: |
+    Prüft ob heute eine der ausgewählten Schichten im Schichtplan aktiv ist.
+    Basierend auf der TG Schichtplan Card.
+  domain: automation
+  input:
+    debugmode:
+      name: "Debug-Modus"
+      description: Aktiviert Debug-Ausgaben für die Schichtplanprüfung
+      default: false
+      selector:
+        boolean: {}
+    
+    store_mode:
+      name: Speichermodus
+      description: Wählen Sie den Speichermodus für die Schichtplanprüfung
+      default: 'text_entity'
+      selector:
+        select:
+          options:
+            - 'saver'
+            - 'text_entity'
+    
+    conf_saver:
+      name: Einrichtung der optionalen Saver-Integration (HACS) [empfohlen!]
+      icon: mdi:cog
+      collapsed: true
+      description: Configuration 
+      input:  
+        saver_key:
+          name: Variablenname für den Saver, muss mit dem Variablennamen in der Karte übereinstimmen
+          default: 'Schichtplan'
+          selector:
+            text: {}
+    
+    conf_text_entity:
+      name: Einrichtung der optionalen text-entities falls Saver-Integration nicht verwendet wird
+      icon: mdi:cog
+      collapsed: true
+      description: Configuration 
+      input:  
+        plan_entity:
+          name: Plan-Entity (Schichtplan)
+          description: Die input_text Entity, die den Schichtplan enthält andere notwendige Entities werden aus dieser abgeleitet
+          selector:
+            entity:
+              domain: input_text
+    
+    
+    shift_schedule_check_timer:
+      name: "Schichtplanprüfung-Timer"
+      default: '-'
+      selector:
+        entity:
+          multiple: false
+          filter:
+            domain:
+              - timer
+    
+    
+
+variables:
+  debugmode_input: !input debugmode
+  plan_entity: !input plan_entity
+  saver_key: !input saver_key
+  store_mode: !input store_mode
+  nextEventTimer: !input shift_schedule_check_timer
+  
+  
+  saver_config_key: "{{- saver_key -}}_config"
+  saver_status_key: "{{- saver_key -}}_status"
+  saver_timer_key: "{{- saver_key -}}_timer"
+  
+  
+  config_entity: "{{- plan_entity -}}_config"
+  status_entity: "{{- plan_entity -}}_status"
+  observed_entities: >-
+    {%- set observed = [] -%}
+    {%- set observed = observed + [plan_entity] -%}
+    {%- set observed = observed + [config_entity] -%}
+    {{- observed|to_json -}}
+
+trigger:
+  - platform: homeassistant
+    event: start
+    id: haStart
+  - platform: time
+    at: "00:00:00"
+    id: time_trigger
+  - platform: event
+    event_type: state_changed
+    id: statechanged
+  - platform: event
+    event_type: event_saver_saved_variable
+    id: saver_saved_variable
+  - platform: event
+    event_type: timer.finished
+    id: timer_finished
+  
+
+condition:
+  - condition: or
+    conditions:
+      - condition: trigger
+        id:
+          - haStart
+          - time_trigger
+      - condition: and
+        conditions:
+          - condition: trigger
+            id: timer_finished
+          - condition: template
+            value_template: >
+              {%- set timer_valid = nextEventTimer != '' and nextEventTimer != '-' -%}
+              {%- set timer_matches = timer_valid and trigger.event.data.entity_id|default('') == nextEventTimer -%}
+              {{- timer_matches -}}
+      - condition: and
+        conditions:
+          - condition: trigger
+            id: statechanged
+          - condition: template
+            value_template: >
+              {%- set observed_list = observed_entities|string|trim|from_json|default([]) if observed_entities is string else observed_entities|default([]) -%}
+              {%- set entity_id = trigger.event.data.entity_id -%}
+              {{- entity_id in observed_list -}}
+  
+      - condition: and
+        conditions:
+          - condition: trigger
+            id: saver_saved_variable
+          - condition: template
+            value_template: >
+              {# Prüfe ob Saver-Mode aktiv ist und Key gültig ist #}
+              {%- set saver_mode_active = store_mode is defined and store_mode|string == 'saver' -%}
+              {%- set saver_key_valid = saver_key is defined and saver_key != '' and saver_key != '-' -%}
+              {%- if saver_key_valid -%}
+                {%- set event_variable = trigger.event.data.variable|default('') if trigger.event is defined and trigger.event.data is defined and trigger.event.data.variable is defined else '' -%}
+                {%- set key_matches = event_variable == saver_key or event_variable.startswith(saver_key + '_') -%}
+              {%- else -%}
+                {%- set key_matches = false -%}
+              {%- endif -%}
+              {{- saver_mode_active and saver_key_valid and key_matches -}}
+  
+
+action:
+  # logic part
+  - variables:
+      invalid_states: ['unknown', 'unavailable']
+      heute_jahr: "{{ now().strftime('%y')|string }}"
+      heute_monat: "{{ now().strftime('%m')|string }}"
+      heute_tag: "{{ now().strftime('%d')|string }}"
+      aktuelle_zeit: "{{ now().strftime('%H:%M')|string }}"
+      aktuelle_zeit_minuten: "{{ now().strftime('%H')|int * 60 + now().strftime('%M')|int }}"
+      
+      is_saver_valid: >-
+      
+        {%- set saver_key_valid = saver_key is defined and saver_key != '' and saver_key != '-' -%}
+        {%- set store_mode_valid = store_mode is defined and store_mode == 'saver' -%}
+        {%- set saver_available = states('saver.saver')|string not in invalid_states -%}
+        {{- saver_key_valid and store_mode_valid and saver_available -}}
+        
+      
+      data: >-
+      
+        {# Internes Makro zum Parsen von Config-Daten #}
+        {%- macro parseConfigData(raw_config, setup={}) -%}
+          {%- set ns = namespace(newJsonString="", newPart="", shifts=[], parsed_data={"shifts": [], "setup": {} }) -%}
+        
+          {%- if raw_config is string and (raw_config|trim)|first == '[' -%}
+            {# Komprimiertes Format: [a,b,c],[d,e,f] #}
+            {%- set raw_parts = raw_config.split('],') -%}
+            {%- set ns.newJsonString = "" -%}
+        
+            {%- for part in raw_parts -%}
+              {%- if ns.newJsonString != "" -%}
+                {%- set ns.newJsonString = ns.newJsonString ~ "," -%}
+              {%- endif -%}
+        
+              {# Entferne ggf. restliche [ oder ] #}
+              {%- set clean_part = part | replace('[', '') | replace(']', '') | replace('"', '') -%}
+              {%- set fields = clean_part.split(',') -%}
+        
+              {%- set ns.newPart = "" -%}
+              {%- for field in fields -%}
+                {%- if ns.newPart != "" -%}
+                  {%- set ns.newPart = ns.newPart ~ "," -%}
+                {%- endif -%}
+                {%- if field == '' -%}
+                  {%- set ns.newPart = ns.newPart ~ "null" -%}
+                {%- else -%}
+                  {%- set ns.newPart = ns.newPart ~ '"' ~ field ~ '"' -%}
+                {%- endif -%}
+              {%- endfor -%}
+        
+              {%- set ns.newJsonString = ns.newJsonString ~ "[" ~ ns.newPart ~ "]" -%}
+            {%- endfor -%}
+            {%- set ns.shifts = ("[" ~ ns.newJsonString ~ "]")|from_json|default([]) -%}
+            {%- set ns.parsed_data = dict (ns.parsed_data, **{"shifts": ns.shifts}) -%}
+        
+          {%- elif raw_config is string and (raw_config|trim)|first == '{' -%}
+            {# JSON-Format: direkt parsen (ist ein Dict) #}
+            {%- set parsed_dict = raw_config|from_json|default({}) -%}
+            {%- set ns.parsed_data = dict(ns.parsed_data, **parsed_dict) -%}
+          {%- elif raw_config is iterable and raw_config is not mapping -%}
+            {# Es ist ein Array #}
+            {%- set ns.parsed_data = dict(ns.parsed_data, **{'shifts': raw_config}) -%}
+          {%- elif raw_config is mapping -%}
+            {# Es ist bereits ein Dict #}
+            {%- set ns.parsed_data = dict(ns.parsed_data, **raw_config) -%}
+          {%- endif -%}
+          {%- if 'shifts' not in ns.parsed_data -%}
+            {%- set ns.parsed_data = dict(ns.parsed_data, **{"shifts": []}) -%}
+          {%- endif -%}  
+          {# Erweitere mit setup #}
+          {%- set ns.parsed_data = dict(ns.parsed_data, **{"setup": setup}) -%}
+          {{- ns.parsed_data|to_json -}}
+        {%- endmacro -%}
+        
+        {%- set debug = namespace(msg = {}, dbg=[], saver={}) -%}
+        {%- set data_config =  "" -%}
+        {%- set data_data   =  "" -%}
+        {%- set data_entities   =  [] -%}
+        {%- set debug.getdata = "unknown" -%}
+        
+        {%- if is_saver_valid -%}
+          {%- set data_config =  saver_variable(saver_config_key) -%}
+          {%- set data_data   =  saver_variable(saver_key) -%}
+          {%- set debug.getdata = "from saver" -%}
+        {%- endif -%}
+        {%- set debug.saver = dict(debug.saver, **{'is_saver_valid': is_saver_valid, 'data_config': data_config, 'data_data': data_data}) -%}
+        
+        {# Fallback: Wenn auch nur eine Variable aus dem Saver fehlt, hole ALLE Daten aus Entities #}
+        {%- if (data_config == "" or data_config == None) or (data_data == "" or data_data == None) -%}
+          {# Lese config_data aus Entity #}
+          {%- if config_entity and config_entity != '' -%}
+            {%- set config_state = states(config_entity) -%}
+            {%- if config_state|string not in invalid_states -%}
+              {%- set data_config =  config_state|trim -%}
+            {%- endif -%}
+          {%- endif -%}
+          
+          {# Sammle alle Entities und den zusammengesetzten String #}
+          {%- set ns = namespace(entities_array=[], plan_string="") -%}
+          {%- set haupt_state = states(plan_entity) -%}
+          {%- if haupt_state|string not in invalid_states -%}
+            {%- set ns.plan_string = haupt_state -%}
+            {%- for nummer in range(1, 1000) -%}
+              {%- if nummer < 10 -%}
+                {%- set suffix = '00' + nummer|string -%}
+              {%- elif nummer < 100 -%}
+                {%- set suffix = '0' + nummer|string -%}
+              {%- else -%}
+                {%- set suffix = nummer|string -%}
+              {%- endif -%}
+              {%- set entity_id = plan_entity + '_' + suffix -%}
+              {%- set entity_state = states(entity_id) -%}
+              {%- if entity_state|string not in invalid_states -%}
+                {%- set ns.plan_string = ns.plan_string + entity_state|string -%}
+                {%- set ns.entities_array = ns.entities_array + [{'id': entity_id, 'state': entity_state|string}] -%}
+              {%- else -%}
+                {%- break -%}
+              {%- endif -%}
+            {%- endfor -%}
+            {# Haupt-Entity am Anfang des Arrays hinzufügen #}
+            {%- set ns.entities_array = [{'id': plan_entity, 'state': haupt_state, 'plan': ns.plan_string}] + ns.entities_array -%}
+          {%- endif -%}
+          {# Setze alle Werte aus Entities (überschreibt auch vorhandene Saver-Werte) #}
+          {%- set data_data = ns.plan_string -%}
+          {%- set data_entities = ns.entities_array -%}
+          {%- set debug.getdata = "from input entities" -%}
+        {%- endif -%}
+        
+        {%- set debug.msg = dict(debug.msg, **{'saver_status': debug.saver}) -%}
+        {%- set debug.msg = dict(debug.msg, **{'entities': data_entities}) -%}
+        
+        
+        {# Cleanup: Entferne alte Monate aus data_data #}
+        {%- set now_date = now() -%}
+        {# Vergleichswert: Vormonat als Jahr*12 + Monat für korrekten Vergleich #}
+        {%- set compare_val = (now_date.year % 100) * 12 + now_date.strftime('%m')|int -1 -%}
+        {%- set debug.msg = dict(debug.msg, **{'compare_val': compare_val,'getData': debug.getdata}) -%}
+        
+        {# Parse und bereinige data_data: Behalte Vormonat, aktuellen Monat und alle zukünftigen Monate #}
+        {%- set monate_parts = data_data.split(';') -%}
+        {%- set debug.msg = dict(debug.msg, **{'monate_parts_length': monate_parts|length}) -%}
+        {%- set cleanup_ns = namespace(cleaned_parts=[], dbg=[]) -%}
+        {%- for monat_part in monate_parts -%}
+          {%- set monat_key_parts = (monat_part|trim).split(':', 2) -%}
+          {%- set cleanup_ns.dbg = cleanup_ns.dbg + [{'monat_key_parts': monat_key_parts|length}] -%}
+          {%- if monat_key_parts|length >= 2 and (monat_key_parts[0]|trim|int * 12 + monat_key_parts[1]|trim|int) >= compare_val -%}
+            {%- set cleanup_ns.cleaned_parts = cleanup_ns.cleaned_parts + [monat_part|trim] -%}
+          {%- endif -%}
+        {%- endfor -%}
+        {%- set cleaned_data = cleanup_ns.cleaned_parts|join(';') -%}
+        {%- set debug.msg = dict(debug.msg, **{'dbg': cleanup_ns.dbg, 'cleanup': {'data_data_len': data_data|length, 'monate_parts': monate_parts|length, 'cleaned_parts': cleanup_ns.cleaned_parts|length, 'cleaned_data': cleaned_data|truncate(100)}}) -%}
+        
+        {%- set setup = {'timer_entity': nextEventTimer, 'store_mode': store_mode} -%}
+        {{- {'config_raw': data_config, 'config': parseConfigData(data_config, setup)|from_json|default({}), 'data': cleaned_data, 'entities': data_entities, 'debug': debug.msg}|to_json -}}
+        
+      
+      aktive_schichten: >-
+      
+        {%- set ns = namespace(schichten_list=[]) -%}
+        {%- set data_obj = data|trim|from_json -%}
+        {%- set config_data = data_obj.config|default({}) -%}
+        {%- if config_data is mapping and 'shifts' in config_data -%}
+          {%- set shifts_data = config_data.shifts|default([]) -%}
+        {%- elif config_data is iterable -%}
+          {%- set shifts_data = config_data -%}
+        {%- else -%}
+          {%- set shifts_data = [] -%}
+        {%- endif -%}
+        {%- for shift in shifts_data -%}
+          {%- if shift|length >= 2 -%}
+            {%- set shortcut = shift[0]|trim -%}
+            {%- set name = shift[1]|trim -%}
+            {%- if shortcut != '' -%}
+              {# Prüfe statusRelevant (Index 6): Nur Schichten mit statusRelevant = 1 berücksichtigen #}
+              {%- set status_relevant = true -%}
+              {%- if shift|length > 6 and shift[6] is defined and (shift[6] == 0 or shift[6] == '0' or shift[6] == false or shift[6] == 'false') -%}
+                {%- set status_relevant = false -%}
+              {%- endif -%}
+              {%- if status_relevant -%}
+                {%- set shift_obj = {'shortcut': shortcut, 'name': name} -%}
+                {%- if shift|length > 2 and shift[2]|trim != '' -%}
+                  {%- set shift_obj = dict(shift_obj, **{'start1': shift[2]|trim}) -%}
+                {%- endif -%}
+                {%- if shift|length > 3 and shift[3]|trim != '' -%}
+                  {%- set shift_obj = dict(shift_obj, **{'end1': shift[3]|trim}) -%}
+                {%- endif -%}
+                {%- if shift|length > 4 and shift[4]|trim != '' -%}
+                  {%- set shift_obj = dict(shift_obj, **{'start2': shift[4]|trim}) -%}
+                {%- endif -%}
+                {%- if shift|length > 5 and shift[5]|trim != '' -%}
+                  {%- set shift_obj = dict(shift_obj, **{'end2': shift[5]|trim}) -%}
+                {%- endif -%}
+                {%- set ns.schichten_list = ns.schichten_list + [shift_obj] -%}
+              {%- endif -%}
+            {%- endif -%}
+          {%- endif -%}
+        {%- endfor -%}
+        {%- set json_result = ns.schichten_list|to_json -%}
+        {%- if json_result|string|trim != '' and json_result|string|trim != 'None' -%}
+          {{- json_result -}}
+        {%- else -%}
+          []
+        {%- endif -%}
+        
+      
+      aktive_schichten_heute: >-
+      
+        {%- set ns = namespace(gefundene_schichten=[]) -%}
+        {%- set data_obj = data|trim|from_json -%}
+        {%- set monat_key = heute_jahr|string + ':' + heute_monat|string -%}
+        {%- set monate = (data_obj.data|default('')).split(';') -%}
+        {%- set schichten_config = aktive_schichten|trim|from_json|default([]) -%}
+        {%- for monat in monate -%}
+          {%- if monat.startswith(monat_key + ':') -%}
+            {%- set tage_teil = monat.split(':', 2)[2] if ':' in monat else '' -%}
+            {%- if tage_teil -%}
+              {%- set tage_liste = tage_teil.split(',') -%}
+              {%- for tag_entry in tage_liste -%}
+                {%- if tag_entry.startswith(heute_tag|string) -%}
+                  {%- set tag_schichten = tag_entry[heute_tag|string|length:] -%}
+                  {%- for schicht_config in schichten_config -%}
+                    {%- set shortcut = schicht_config.shortcut -%}
+                    {%- if shortcut != '' and shortcut in tag_schichten -%}
+                      {%- set schicht_info = {'shortcut': shortcut, 'name': schicht_config.name|default('')} -%}
+                      {# Übernehme Zeitfenster-Informationen aus der Konfiguration, auch wenn nicht aktiv #}
+                      {%- if 'start1' in schicht_config and schicht_config.start1|trim != '' -%}
+                        {%- set schicht_info = dict(schicht_info, **{'start1': schicht_config.start1|trim}) -%}
+                      {%- endif -%}
+                      {%- if 'end1' in schicht_config and schicht_config.end1|trim != '' -%}
+                        {%- set schicht_info = dict(schicht_info, **{'end1': schicht_config.end1|trim}) -%}
+                      {%- endif -%}
+                      {%- if 'start2' in schicht_config and schicht_config.start2|trim != '' -%}
+                        {%- set schicht_info = dict(schicht_info, **{'start2': schicht_config.start2|trim}) -%}
+                      {%- endif -%}
+                      {%- if 'end2' in schicht_config and schicht_config.end2|trim != '' -%}
+                        {%- set schicht_info = dict(schicht_info, **{'end2': schicht_config.end2|trim}) -%}
+                      {%- endif -%}
+                      {# Prüfe ob Zeitraum 1 aktiv ist #}
+                      {%- if 'start1' in schicht_info and 'end1' in schicht_info -%}
+                        {%- set start1_parts = schicht_info.start1.split(':') -%}
+                        {%- set end1_parts = schicht_info.end1.split(':') -%}
+                        {%- if start1_parts|length == 2 and end1_parts|length == 2 -%}
+                          {%- set start1_minuten = start1_parts[0]|int * 60 + start1_parts[1]|int -%}
+                          {%- set end1_minuten = end1_parts[0]|int * 60 + end1_parts[1]|int -%}
+                          {%- if aktuelle_zeit_minuten|int >= start1_minuten and aktuelle_zeit_minuten|int <= end1_minuten -%}
+                            {%- set schicht_info = dict(schicht_info, **{'zeitfenster': 1, 'startzeit': schicht_info.start1, 'endzeit': schicht_info.end1}) -%}
+                          {%- endif -%}
+                        {%- endif -%}
+                      {%- endif -%}
+                      {# Prüfe ob Zeitraum 2 aktiv ist, falls Zeitraum 1 nicht aktiv ist #}
+                      {%- if 'zeitfenster' not in schicht_info and 'start2' in schicht_info and 'end2' in schicht_info -%}
+                        {%- set start2_parts = schicht_info.start2.split(':') -%}
+                        {%- set end2_parts = schicht_info.end2.split(':') -%}
+                        {%- if start2_parts|length == 2 and end2_parts|length == 2 -%}
+                          {%- set start2_minuten = start2_parts[0]|int * 60 + start2_parts[1]|int -%}
+                          {%- set end2_minuten = end2_parts[0]|int * 60 + end2_parts[1]|int -%}
+                          {%- if aktuelle_zeit_minuten|int >= start2_minuten and aktuelle_zeit_minuten|int <= end2_minuten -%}
+                            {%- set schicht_info = dict(schicht_info, **{'zeitfenster': 2, 'startzeit': schicht_info.start2, 'endzeit': schicht_info.end2}) -%}
+                          {%- endif -%}
+                        {%- endif -%}
+                      {%- endif -%}
+                      {%- set bereits_vorhanden = false -%}
+                      {%- for vorhanden in ns.gefundene_schichten -%}
+                        {%- if vorhanden.shortcut == schicht_info.shortcut -%}
+                          {%- set bereits_vorhanden = true -%}
+                          {%- break -%}
+                        {%- endif -%}
+                      {%- endfor -%}
+                      {%- if not bereits_vorhanden -%}
+                        {%- set ns.gefundene_schichten = ns.gefundene_schichten + [schicht_info] -%}
+                      {%- endif -%}
+                    {%- endif -%}
+                  {%- endfor -%}
+                {%- endif -%}
+              {%- endfor -%}
+            {%- endif -%}
+          {%- endif -%}
+        {%- endfor -%}
+        {%- set json_result = ns.gefundene_schichten|to_json -%}
+        {%- if json_result|string|trim != '' and json_result|string|trim != 'None' -%}
+          {{- json_result -}}
+        {%- else -%}
+          []
+        {%- endif -%}
+        
+      
+      relevante_schicht: >-
+      
+        {%- set schichten_data = aktive_schichten_heute|trim|from_json|default([]) -%}
+        {%- set ns = namespace(beste_schicht=none) -%}
+        {%- for schicht in schichten_data -%}
+          {# Prüfe ob Zeitfenster definiert sind (auch wenn nicht aktiv) #}
+          {%- set hat_zeitfenster_definiert = ('start1' in schicht and 'end1' in schicht) or ('start2' in schicht and 'end2' in schicht) -%}
+          {# Prüfe ob Zeitfenster aktiv ist #}
+          {%- set zeitfenster_aktiv = 'zeitfenster' in schicht -%}
+          {# Alle Schichten berücksichtigen (auch mit definierten, aber nicht aktiven Zeitfenstern) #}
+          {%- if true -%}
+            {%- if ns.beste_schicht is none -%}
+              {%- set ns.beste_schicht = schicht -%}
+            {%- else -%}
+              {%- set beste_hat_zeitfenster_aktiv = 'zeitfenster' in ns.beste_schicht -%}
+              {%- set beste_hat_zeitfenster_definiert = ('start1' in ns.beste_schicht and 'end1' in ns.beste_schicht) or ('start2' in ns.beste_schicht and 'end2' in ns.beste_schicht) -%}
+              {%- if zeitfenster_aktiv and not beste_hat_zeitfenster_aktiv -%}
+                {# Aktives Zeitfenster schlägt kein aktives Zeitfenster #}
+                {%- set ns.beste_schicht = schicht -%}
+              {%- elif beste_hat_zeitfenster_aktiv and not zeitfenster_aktiv -%}
+                {# Beste hat aktives Zeitfenster, aktuelle nicht: beste bleibt #}
+              {%- elif zeitfenster_aktiv == beste_hat_zeitfenster_aktiv -%}
+                {%- if zeitfenster_aktiv -%}
+                  {# Beide haben aktive Zeitfenster: Startzeit näher an jetzt gewinnt #}
+                  {%- if 'startzeit' in ns.beste_schicht and 'startzeit' in schicht -%}
+                    {%- set beste_zeit_parts = ns.beste_schicht.startzeit.split(':') -%}
+                    {%- set aktuelle_zeit_parts = schicht.startzeit.split(':') -%}
+                    {%- if beste_zeit_parts|length == 2 and aktuelle_zeit_parts|length == 2 -%}
+                      {%- set beste_minuten = beste_zeit_parts[0]|int * 60 + beste_zeit_parts[1]|int -%}
+                      {%- set aktuelle_minuten = aktuelle_zeit_parts[0]|int * 60 + aktuelle_zeit_parts[1]|int -%}
+                      {%- set jetzt_minuten = aktuelle_zeit_minuten|int -%}
+                      {%- set beste_diff = (jetzt_minuten - beste_minuten)|abs -%}
+                      {%- set aktuelle_diff = (jetzt_minuten - aktuelle_minuten)|abs -%}
+                      {%- if aktuelle_diff < beste_diff -%}
+                        {%- set ns.beste_schicht = schicht -%}
+                      {%- endif -%}
+                    {%- endif -%}
+                  {%- endif -%}
+                {%- else -%}
+                  {# Beide haben kein aktives Zeitfenster: erste gewinnt (bereits gesetzt) #}
+                {%- endif -%}
+              {%- endif -%}
+            {%- endif -%}
+          {%- endif -%}
+        {%- endfor -%}
+        {%- if ns.beste_schicht is not none -%}
+          {{- ns.beste_schicht|to_json -}}
+        {%- else -%}
+          {}
+        {%- endif -%}
+        
+      
+      schicht_aktiv: >-
+      
+        {%- set schicht_info = relevante_schicht|trim|from_json|default({}) -%}
+        {{- schicht_info|length > 0 -}}
+        
+      
+      result: >-
+      
+        {%- set ergebnis = {} -%}
+        {%- set schicht_info = relevante_schicht|trim|from_json|default({}) -%}
+        {%- if schicht_info|length > 0 and 'zeitfenster' in schicht_info -%}
+          {%- set shortcut = schicht_info.shortcut -%}
+          {%- set schicht_ergebnis_obj = {'startzeit': schicht_info.startzeit|default(''), 'endzeit': schicht_info.endzeit|default(''), 'name': schicht_info.name|default(''), 'zeitfenster': schicht_info.zeitfenster|default('')} -%}
+          {%- set ergebnis = dict(ergebnis, **{shortcut: [schicht_ergebnis_obj]}) -%}
+        {%- endif -%}
+        {{- ergebnis -}}
+        
+      
+      planned_timer: >-
+      
+        {%- macro sekunden_zu_hhmmss(sekunden) -%}
+          {%- set hours = sekunden // 3600 -%}
+          {%- set minutes = (sekunden % 3600) // 60 -%}
+          {%- set seconds = sekunden % 60 -%}
+          {%- if hours < 10 -%}
+            {%- set hours_str = '0' ~ hours|string -%}
+          {%- else -%}
+            {%- set hours_str = hours|string -%}
+          {%- endif -%}
+          {%- if minutes < 10 -%}
+            {%- set minutes_str = '0' ~ minutes|string -%}
+          {%- else -%}
+            {%- set minutes_str = minutes|string -%}
+          {%- endif -%}
+          {%- if seconds < 10 -%}
+            {%- set seconds_str = '0' ~ seconds|string -%}
+          {%- else -%}
+            {%- set seconds_str = seconds|string -%}
+          {%- endif -%}
+          {{- hours_str ~ ':' ~ minutes_str ~ ':' ~ seconds_str -}}
+        {%- endmacro -%}
+        
+        {%- set timer_result = {'entity': 'none', 'nextCheck': '', 'durationTillCheck': 0, 'duration': '', 'set_timer': 0, 'timestamp': 0} -%}
+        
+        {# Prüfe ob Timer-Entity definiert ist und existiert #}
+        {%- set timer_entity_defined = nextEventTimer is defined and nextEventTimer != '' and nextEventTimer != '-' -%}
+        {%- set timer_entity_exists = false -%}
+        {%- if timer_entity_defined -%}
+          {%- set invalid_states = ['unknown', 'unavailable'] -%}
+          {%- set timer_state_check = states(nextEventTimer) -%}
+          {%- set timer_entity_exists = timer_state_check is not none and timer_state_check|string not in invalid_states -%}
+        {%- endif -%}
+        {%- set timer_entity_valid = timer_entity_defined and timer_entity_exists -%}
+        {%- if timer_entity_valid -%}
+          {%- set timer_result = dict(timer_result, **{'entity': nextEventTimer}) -%}
+        {%- endif -%}
+        
+        {# Finde nächsten Zeitpunkt (unabhängig von Timer-Entity) #}
+        {%- set schichten_data = aktive_schichten_heute|trim|from_json|default([]) -%}
+        {%- set ns = namespace(naechster_check=none, naechster_duration=none, next_check_str=0, duration=0, durationTillCheck=0) -%}
+        {%- for schicht in schichten_data -%}
+          {# Sammle alle Zeitpunkte dieser Schicht (Zeitfenster sind bereits in aktive_schichten_heute enthalten) #}
+          {%- for key in ['start1', 'end1', 'start2', 'end2'] -%}
+            {%- if key in schicht and schicht[key]|trim != '' -%}
+              {%- set zeit_parts = (schicht[key]|trim).split(':') -%}
+              {%- if zeit_parts|length == 2 -%}
+                {%- set zeit_minuten = zeit_parts[0]|int * 60 + zeit_parts[1]|int -%}
+                {%- if zeit_minuten > aktuelle_zeit_minuten|int and (ns.naechster_check is none or ns.naechster_check > zeit_minuten) -%}
+                  {%- set ns.naechster_check = zeit_minuten -%}
+                  {%- set ns.naechster_duration = zeit_minuten - aktuelle_zeit_minuten|int -%}
+                {%- endif -%}
+              {%- endif -%}
+            {%- endif -%}
+          {%- endfor -%}
+        {%- endfor -%}
+        
+        
+        {# Berechne nextCheck und duration (unabhängig von Timer-Entity) #}
+        {%- if ns.naechster_check is not none and ns.naechster_check > 0 -%}
+          {# Konvertiere Minuten zu Sekunden (inkl. 5 Sekunden) für nextCheck #}
+          {%- set ns.next_check_str = (ns.naechster_check|int) * 60 + 5 -%}
+        {%- endif -%}
+        
+        {%- if ns.naechster_duration is not none and ns.naechster_duration > 0 -%}
+          {# Berechne Differenz in Sekunden (inkl. 5 Sekunden) #}
+          {%- set diff_sekunden = (ns.naechster_duration|int) * 60 + 5 -%}
+          {%- set ns.durationTillCheck = diff_sekunden -%}
+          {%- set ns.duration = diff_sekunden -%}
+        {%- endif -%}
+        
+        {# Bestimme set_timer: 1 = setzen, 0 = nichts tun, -1 = alter Timer beenden #}
+        {%- set ns.set_timer = 0 -%}
+        {%- if not timer_entity_valid -%}
+          {# Keine Entity vorhanden → nichts tun #}
+          {%- set ns.set_timer = 0 -%}
+        {%- elif ns.durationTillCheck == 0 -%}
+          {# Kein neuer Timer geplant #}
+          {%- set timer_state = states(nextEventTimer)|string|default('idle') -%}
+          {%- set timer_active = timer_state == 'active' -%}
+          {%- if timer_active -%}
+            {# Alter Timer aktiv, aber kein neuer geplant → Timer beenden #}
+            {%- set ns.set_timer = -1 -%}
+          {%- else -%}
+            {# Alter Timer inaktiv und kein neuer geplant → nichts tun #}
+            {%- set ns.set_timer = 0 -%}
+          {%- endif -%}
+        {%- elif timer_entity_valid and ns.durationTillCheck > 0 -%}
+          {# Entity vorhanden und neuer Timer geplant #}
+          {%- set timer_state = states(nextEventTimer)|string|default('idle') -%}
+          {%- set timer_active = timer_state == 'active' -%}
+          {%- if timer_active -%}
+            {# Alter Timer ist aktiv, prüfe ob er korrekt läuft #}
+            {%- set remaining_raw = state_attr(nextEventTimer, 'remaining')|default(0) -%}
+            {%- set current_remaining = 0 -%}
+            {%- if remaining_raw is string and ':' in remaining_raw -%}
+              {# Parse "HH:MM:SS" Format #}
+              {%- set remaining_parts = remaining_raw.split(':') -%}
+              {%- if remaining_parts|length >= 3 -%}
+                {%- set hours = remaining_parts[0]|default('0')|trim|int|default(0) -%}
+                {%- set minutes = remaining_parts[1]|default('0')|trim|int|default(0) -%}
+                {%- set seconds = remaining_parts[2]|default('0')|trim|int|default(0) -%}
+                {%- set current_remaining = hours * 3600 + minutes * 60 + seconds -%}
+              {%- endif -%}
+            {%- elif remaining_raw is number -%}
+              {%- set current_remaining = remaining_raw|int -%}
+            {%- endif -%}
+            {%- if current_remaining > 0 -%}
+              {%- set diff = (current_remaining - ns.durationTillCheck)|abs -%}
+              {%- if diff <= 5 -%}
+                {# Alter Timer läuft bereits korrekt (innerhalb 5 Sekunden Toleranz) → nichts tun #}
+                {%- set ns.set_timer = 0 -%}
+              {%- else -%}
+                {# Timer muss gesetzt werden (Differenz > 5 Sekunden) #}
+                {%- set ns.set_timer = 1 -%}
+              {%- endif -%}
+            {%- else -%}
+              {# Timer ist aktiv aber remaining konnte nicht geparst werden, setzen #}
+              {%- set ns.set_timer = 1 -%}
+            {%- endif -%}
+          {%- else -%}
+            {# Timer ist nicht aktiv, muss gesetzt werden #}
+            {%- set ns.set_timer = 1 -%}
+          {%- endif -%}
+        {%- endif -%}
+        
+        {# Konvertiere nextCheck und duration zu String für timer_result (0 wird zu leerem String) #}
+        {%- set next_check_final = '' if ns.next_check_str == 0 else sekunden_zu_hhmmss(ns.next_check_str) -%}
+        {%- set duration_final = '' if ns.duration == 0 else sekunden_zu_hhmmss(ns.duration) -%}
+        {# Berechne Timestamp für Ablaufzeitpunkt des Timers #}
+        {%- set timestamp_final = 0 -%}
+        {%- if ns.durationTillCheck > 0 -%}
+          {%- set timestamp_final = (now().timestamp() + ns.durationTillCheck)|int -%}
+        {%- endif -%}
+        {%- set timer_result = dict(timer_result, **{'nextCheck': next_check_final, 'durationTillCheck': ns.durationTillCheck, 'duration': duration_final, 'set_timer': ns.set_timer, 'timestamp': timestamp_final}) -%}
+        {{- timer_result|to_json -}}
+        
+      
+      status_text: >-
+      
+        {%- set status_text_early = "1" -%} {# früh oder spät #}
+        {%- set status_text_late = "2" -%} {# früh oder spät #}
+        {%- set schicht_info = relevante_schicht|trim|from_json|default({}) -%}
+        {%- set status_value = '' -%}
+        {%- if 'name' in schicht_info -%}
+          {%- set schicht_name = schicht_info.name|default('') -%}
+        {%- else -%}
+          {%- set schicht_name = '' -%}
+        {%- endif -%}
+        {%- if schicht_name != '' -%}
+          {# Prüfe ob Zeitfenster aktiv ist #}
+          {%- set zeitfenster_aktiv = 'zeitfenster' in schicht_info -%}
+          {# Prüfe ob Zeitfenster definiert sind (auch wenn nicht aktiv) #}
+          {%- set hat_zeitfenster_definiert = ('start1' in schicht_info and 'end1' in schicht_info) or ('start2' in schicht_info and 'end2' in schicht_info) -%}
+          {%- if zeitfenster_aktiv -%}
+            {# Zeitfenster ist aktiv, füge "früh" oder "spät" hinzu #}
+            {%- set status_value = schicht_name -%}
+            {%- if 'zeitfenster' in schicht_info -%}
+              {%- set zeitfenster_num = schicht_info.zeitfenster|trim -%}
+            {%- else -%}
+              {%- set zeitfenster_num = '' -%}
+            {%- endif -%}
+            {%- if zeitfenster_num == '1' -%}
+              {%- set status_value = status_value ~ '_' ~ status_text_early -%}
+            {%- elif zeitfenster_num == '2' -%}
+              {%- set status_value = status_value ~ '_' ~ status_text_late -%}
+            {%- endif -%}
+          {# {%- elif not hat_zeitfenster_definiert -%} #}
+            {# Keine Zeitfenster definiert = ganzer Tag aktiv (00:00-24:00) #}
+            {# {%- set status_value = schicht_name -%} #}
+          {%- else -%}
+            {# Zeitfenster definiert, aber nicht aktiv = Status ohne "_1" oder "_2" #}
+            {%- set status_value = schicht_name -%}
+          {%- endif -%}
+          {# Normalisierung: Leerzeichen zu _, weitere Zeichen normalisieren #}
+          {%- if status_value != '' -%}
+            {%- set status_value = status_value|replace(' ', '_')|replace('-', '_')|replace('ä', 'ae')|replace('ö', 'oe')|replace('ü', 'ue')|replace('Ä', 'Ae')|replace('Ö', 'Oe')|replace('Ü', 'Ue')|replace('ß', 'ss')|lower -%}
+          {%- endif -%}
+        {%- endif -%}
+        {{- status_value -}}
+        
+
+
+  # debug part
+  - if:
+      - condition: template
+        value_template: "{{ debugmode_input }}"
+    then:
+      - variables:
+          debugMsg: >-
+            {# ___________________________________________________ #}
+            {%- macro dumpToHTML(val, filter=[], maxSteps=3, testJson=false, details=0, thisStep=0) -%}
+              {%- set patternMap = '^[\s]*\{[\S\s]*\}[\s]*$' -%}
+              {%- set patternList = '^[\s]*\[[\S\s]*\][\s]*$' -%}
+            
+              {%- set dump = namespace() -%} 
+              {%- set dump.tmp="" -%}
+              {%- set dump.val=val -%}
+              {%- set dump.valType=none -%}
+              {%- set myFilter=filter -%}
+              {%- set filter=[] -%}
+              {%- set thisStep=thisStep + 1 -%}
+              
+              {%- if thisStep > maxSteps -%}
+                {%- if dump.val is list or dump.val is mapping -%} {%- set dump.tmp = dump.val|to_json -%} {%- else -%} {%- set dump.tmp = dump.val -%} {%- endif -%}
+                {%- set dump.valType="json" -%}
+              {%- else -%}
+                {%- if dump.val is string and testJson == true and ( dump.val is search(patternMap) or dump.val is search(patternList) )-%}
+                  {%- set dump.val=dump.val|replace("'", '"')|from_json -%}
+                {%- endif -%}
+                {%- if dump.val is list -%}
+                  {%- set dump.valType="list" -%}
+                  {%- set dump.tmp = dump.tmp ~ "<ul>" -%} 
+                  {%- for item in dump.val -%}
+                    {%- set myDump = dumpToHTML(item, filter, maxSteps, testJson, details, thisStep)|from_json -%}
+                    {%- set dump.tmp = dump.tmp ~ "<li>" ~ myDump[1] ~ "</li>" -%}
+                  {%- endfor -%}
+                  {%- set dump.tmp = dump.tmp ~ "</ul>" -%} 
+                {%- elif dump.val is mapping -%}
+                  {%- set dump.valType="dict" -%}
+                  {%- set dump.tmp = dump.tmp ~ "<ul>" -%} 
+                  {%- for name, item in dump.val.items() -%}
+                    {%- if thisStep > 1 or name not in myFilter -%}
+                      {%- set preTxt = "<li>" -%}
+                      {%- set postTxt = "</li>" -%}
+                      {%- set nameTxtStart = "<b>" -%}
+                      {%- set NameTxtEnd = "</b>" -%}
+                      {%- set myDump = dumpToHTML(item, filter, maxSteps, testJson, details, thisStep)|from_json -%}
+                      {%- if details == thisStep and myDump[0] == "dict" -%}
+                        {%- set preTxt = preTxt ~ "<details>" -%}
+                        {%- set postTxt = "</details>" ~ postTxt -%}
+                        {%- set nameTxtStart = "<summary>" ~ nameTxtStart -%}
+                        {%- set NameTxtEnd = NameTxtEnd ~ "</summary>" -%}
+                      {%- endif -%}
+            
+                      {%- set dump.tmp = dump.tmp ~ preTxt ~ nameTxtStart ~ name ~ ": " ~ NameTxtEnd ~ myDump[1] ~ postTxt -%}
+                    {%- endif -%}
+                  {%- endfor -%}
+                  {%- set dump.tmp = dump.tmp ~ "</ul>" -%} 
+                {%- elif dump.val is string or dump.val is number -%}
+                  {%- set dump.tmp = dump.tmp ~ " " ~ dump.val ~ "" -%} 
+                  {%- set dump.valType="string" -%}
+                {%- endif -%}
+              {%- endif -%}
+            
+              {%- if thisStep == 1 -%}
+                {{- dump.tmp -}}
+              {%- else -%}
+                {{- [dump.valType, dump.tmp]|to_json -}}
+              {%- endif -%}
+            {%- endmacro -%}
+            
+            {%- set data_str = data|trim -%}
+            
+            {%- set dbg_obj = data_str|from_json|default({}) -%}
+            
+            {%- set trigger_info = {} -%}
+            {%- if trigger is defined -%}
+              {%- set trigger_info = dict(trigger_info, **{'id': trigger.id|default('unknown'), 'platform': trigger.platform|default('unknown')}) -%}
+              {%- if trigger.platform == 'event' and trigger.event is defined -%}
+                {%- set trigger_info = dict(trigger_info, **{'event_type': trigger.event.event_type|default('unknown'), 'event_data': trigger.event.data, 'event_context': trigger.event.context}) -%}
+              {%- elif trigger.platform == 'state' and trigger.entity_id is defined -%}
+                {%- set trigger_info = dict(trigger_info, **{'entity_id': trigger.entity_id, 'from_state': trigger.from_state, 'to_state': trigger.to_state}) -%}
+              {%- endif -%}
+            {%- endif -%}
+            
+            {%- set dbg_obj = dict(dbg_obj, **{'observed_entities': observed_entities, 'planned_timer': planned_timer, 'status_text': status_text, 'trigger': trigger_info}) -%}
+            <b>Schichtplan Debug-Informationen:</b><br>
+            {{- dumpToHTML(dbg_obj, [], 5, false, 3) -}}
+            
+      - action: notify.persistent_notification
+        metadata: {}
+        data:
+          title: "Debug TG Schichtplan"
+          message: "{{- debugMsg -}}"
+  
+
+
+  # action part
+  - if:
+      - condition: template
+        value_template: >-
+          {%- set entity_valid = status_entity is defined and status_entity != '' and states(status_entity)|string not in invalid_states -%}
+          {%- if entity_valid -%}
+            {%- set current_status = states(status_entity)|string|default('') -%}
+            {%- set new_status = status_text|default('') -%}
+            {{- current_status != new_status -}}
+          {%- else -%}
+            {{- false -}}
+          {%- endif -%}
+    then:
+      - action: input_text.set_value
+        metadata: {}
+        data:
+          value: "{{ status_text }}"
+        target:
+          entity_id: "{{ status_entity }}"
+  - if:
+      - condition: template
+        value_template: >-
+          {%- set timer_data = planned_timer|trim|from_json|default({}) -%}
+          {%- set set_timer = timer_data.set_timer|default(0)|int -%}
+          {{- set_timer == 1 -}}
+    then:
+      - action: timer.cancel
+        target:
+          entity_id: "{{ (planned_timer|trim|from_json|default({})).entity }}"
+      - action: timer.start
+        data:
+          duration: "{{ (planned_timer|trim|from_json|default({})).duration }}"
+        target:
+          entity_id: "{{ (planned_timer|trim|from_json|default({})).entity }}"
+  - if:
+      - condition: template
+        value_template: >-
+          {%- set timer_data = planned_timer|trim|from_json|default({}) -%}
+          {%- set set_timer = timer_data.set_timer|default(0)|int -%}
+          {{- set_timer == -1 -}}
+    then:
+      - action: timer.finish
+        target:
+          entity_id: "{{ (planned_timer|trim|from_json|default({})).entity }}"
+  
+  
+  - if:
+      - condition: template
+        value_template: >-
+          {{- is_saver_valid -}}
+    then:
+      - if:
+          - condition: template
+            value_template: >-
+              {%- set data_obj = data|trim|from_json|default({}) -%}
+              {%- set cleaned_data = data_obj.data|default('') -%}
+              {{- cleaned_data != '' -}}
+        then:
+          - service: saver.set_variable
+            data:
+              name: "{{ saver_key }}"
+              value: "{{ (data|trim|from_json|default({})).data }}"
+  
+      - if:
+          - condition: template
+            value_template: >-
+              {%- set timer_data = planned_timer|trim|from_json|default({}) -%}
+              {%- set new_timestamp = timer_data.timestamp|default(0)|int -%}
+              {%- set new_set_timer = timer_data.set_timer|default(0)|int -%}
+              {%- set should_write = false -%}
+              {%- set saver_timer_state = states('saver.' ~ saver_timer_key) -%}
+              {%- if saver_timer_state|string in ['unknown', 'unavailable', 'None', ''] -%}
+                {# Variable existiert nicht im Saver #}
+                {%- set should_write = true -%}
+              {%- else -%}
+                {# Variable existiert, prüfe Timestamp und set_timer #}
+                {%- set saver_timer_data = saver_timer_state|trim|from_json|default({}) -%}
+                {%- set old_timestamp = saver_timer_data.timestamp|default(0)|int -%}
+                {%- set old_set_timer = saver_timer_data.set_timer|default(0)|int -%}
+                {%- set timestamp_diff = (new_timestamp - old_timestamp)|abs -%}
+                {%- if timestamp_diff > 5 or new_set_timer != old_set_timer -%}
+                  {%- set should_write = true -%}
+                {%- endif -%}
+              {%- endif -%}
+              {{- should_write -}}
+        then:
+          - service: saver.set_variable
+            data:
+              name: "{{ saver_timer_key }}"
+              value: "{{ planned_timer|trim|from_json|default({})|to_json }}"
+  
+      - if:
+          - condition: template
+            value_template: >-
+              {%- set data_obj = data|trim|from_json|default({'config': []}) -%}
+              {%- set new_config = data_obj.config|default([])|to_json -%}
+              {%- set saver_config_state = states('saver.' ~ saver_config_key) -%}
+              {%- set should_write = false -%}
+              {%- if saver_config_state|string in ['unknown', 'unavailable', 'None', ''] -%}
+                {# Variable existiert nicht im Saver #}
+                {%- set should_write = true -%}
+              {%- else -%}
+                {# Variable existiert, vergleiche Werte #}
+                {%- set old_config = saver_config_state|string|trim|default('') -%}
+                {%- if new_config != old_config -%}
+                  {%- set should_write = true -%}
+                {%- endif -%}
+              {%- endif -%}
+              {{- should_write -}}
+        then:
+          - service: saver.set_variable
+            data:
+              name: "{{ saver_config_key }}"
+              value: "{{ (data|trim|from_json|default({'config': []})).config|to_json }}"
+  
+      - if:
+          - condition: template
+            value_template: >-
+              {%- set new_status = status_text|default('')|string -%}
+              {%- set saver_status_state = states('saver.' ~ saver_status_key) -%}
+              {%- set should_write = false -%}
+              {%- if saver_status_state|string in ['unknown', 'unavailable', 'None', ''] -%}
+                {# Variable existiert nicht im Saver #}
+                {%- set should_write = true -%}
+              {%- else -%}
+                {# Variable existiert, vergleiche Werte #}
+                {%- set old_status = saver_status_state|string|default('') -%}
+                {%- if new_status != old_status -%}
+                  {%- set should_write = true -%}
+                {%- endif -%}
+              {%- endif -%}
+              {{- should_write -}}
+        then:
+          - service: saver.set_variable
+            data:
+              name: "{{ saver_status_key }}"
+              value: "{{ status_text }}"
+  

@@ -24,7 +24,7 @@ blueprint:
       input:  
         linked_persons:
           name: persons or text-helpers with state of persons
-          default: "-"
+          default: []
           selector:
             entity:
               multiple: true
@@ -39,8 +39,9 @@ blueprint:
       description: Configuration
       input:  
         linked_heatings:
-          name: conf_devices
-          default: "-"
+          name: heating devices
+          description: Select all heating devices that you want to control. The friendly_name attribute should start with the unique abbreviation that you use in your configuration.
+          default: []
           selector:
             entity:
               multiple: true
@@ -581,22 +582,32 @@ variables:
         {%- set status = observer("switches", switch.device)  -%}
       {%- endif -%}
     {%- endfor -%}
-    {%- set status = observer("fader", var_temp_classes.values() | map(attribute="device")|list ) -%}
-    {%- if var_advanced_dev_config is mapping -%}
-      {%- for key, val in var_advanced_dev_config.items() -%}
-        {%- if val is mapping and val.faders is defined -%}
-          {%- if val.faders is mapping -%}
-            {%- for fader, faderval in val.faders.items() -%}
-              {%- if fader == "target" or fader == "overdrive" -%}
-                {%- set status = observer("overdrive",faderval)  -%}
-              {%- else -%}
-                {%- set status = observer("fader",faderval)  -%}
-              {%- endif -%}
-            {%- endfor -%}
+        {%- set status = observer("fader", var_temp_classes.values() | map(attribute="device")|list ) -%}
+        {%- set tmp_advanced_dev_config = var_advanced_dev_config -%}
+        {%- if tmp_advanced_dev_config is string -%}
+          {%- if tmp_advanced_dev_config is search(cmdStrTstPatternDict) -%}
+            {%- set tmp_advanced_dev_config = tmp_advanced_dev_config|replace("'", '"')|from_json -%}
+          {%- else -%}
+            {%- set tmp_advanced_dev_config = {} -%}
           {%- endif -%}
+        {%- elif not (tmp_advanced_dev_config is mapping) -%}
+          {%- set tmp_advanced_dev_config = {} -%}
         {%- endif -%}
-      {%- endfor -%}
-    {%- endif -%}
+        {%- if tmp_advanced_dev_config is mapping -%}
+          {%- for key, val in tmp_advanced_dev_config.items() -%}
+            {%- if val is mapping and val.faders is defined -%}
+              {%- if val.faders is mapping -%}
+                {%- for fader, faderval in val.faders.items() -%}
+                  {%- if fader == "target" or fader == "overdrive" -%}
+                    {%- set status = observer("overdrive",faderval)  -%}
+                  {%- else -%}
+                    {%- set status = observer("fader",faderval)  -%}
+                  {%- endif -%}
+                {%- endfor -%}
+              {%- endif -%}
+            {%- endif -%}
+          {%- endfor -%}
+        {%- endif -%}
     
     
     {{- ns.myEntities -}}
@@ -726,7 +737,7 @@ action:
             {%- endif -%}
         {%- endif -%}
         
-        {%- if  ns.state.state == false and inp_use_statehelper is string and inp_use_statehelper|length > 0 and inp_use_statehelper != "-" and states(inp_use_statehelper) != "unknown"-%}
+        {%- if  ns.state.state == false and inp_use_statehelper is string and inp_use_statehelper|length > 0 and inp_use_statehelper != "-" and states(inp_use_statehelper) != "unavailable"-%}
             {%- set ns.tmp = states(inp_use_statehelper) -%}
             {%- if ns.tmp is search('^"') -%}{%- set ns.tmp = ns.tmp[1:] -%}{%- endif -%}
             {%- if ns.tmp is search('"$') -%}{%- set ns.tmp = ns.tmp[:1] -%}{%- endif -%}
@@ -1655,6 +1666,15 @@ action:
           {%- set nsm = namespace() -%}
           {%- set nsm.devices = {} -%}
           {%- set nsm.advancedDevConfig = {} if not "advancedDeviceConfig" in myConfig else myConfig.advancedDeviceConfig -%}
+          {%- if nsm.advancedDevConfig is string -%}
+            {%- if nsm.advancedDevConfig is search(cmdStrTstPatternDict) -%}
+              {%- set nsm.advancedDevConfig = nsm.advancedDevConfig|replace("'", '"')|from_json -%}
+            {%- else -%}
+              {%- set nsm.advancedDevConfig = {} -%}
+            {%- endif -%}
+          {%- elif not (nsm.advancedDevConfig is mapping) -%}
+            {%- set nsm.advancedDevConfig = {} -%}
+          {%- endif -%}
           {%- set nsm.counter = 1 -%}
           {%- for deviceClass in myConfig.devices.keys()|sort -%}
             {%- set items = myConfig.devices[deviceClass] -%}
@@ -1743,7 +1763,13 @@ action:
         {%- set ns.jetzt = now() -%}
         {%- set ns.jetzt_Min_Timestamp = ((ns.jetzt | as_timestamp ) / 60)|int  -%}
         
-        {%- set ns.cmd = myConfig.defaultCmd -%}
+        {%- if myConfig.defaultCmd is string -%}
+          {%- set ns.cmd = myConfig.defaultCmd|from_json -%}
+        {%- elif myConfig.defaultCmd is mapping -%}
+          {%- set ns.cmd = myConfig.defaultCmd -%}
+        {%- else -%}
+          {%- set ns.cmd = {} -%}
+        {%- endif -%}
         {%- set ns.sequence = myConfig.sequence -%}
         
         {# split statefile input #}
@@ -1784,7 +1810,6 @@ action:
         
         {# ---------ns.cmd wird über die Switches befüllt/geändert, wenn mode exclusiv == true > break--------#}
         {%- set ns.userbreak = false -%}
-        {# 
         {%- for switchname in ns.devices.switches | sort(attribute='position') | list -%}
           {%- set switch = ns.devices.switches[switchname] -%}
           {%- if "device" in switch and switch.device != "-" -%}
@@ -1793,13 +1818,13 @@ action:
             {%- if "on_mode" in switch and switch.on_mode -%}{%- set onMode = True -%}{%- else -%}{%- set onMode = False -%}{%- endif -%}
             {%- if "off_mode" in switch and switch.off_mode -%}{%- set offMode = True -%}{%- else -%}{%- set offMode = False -%}{%- endif -%}           
             {%- if states(switch.device) == "on" -%}
-              {%- set ns.cmd = mergeCmd(ns.cmd, onCmd) -%}
+              {%- set ns.cmd = mergeCmd(ns.cmd, onCmd)|from_json -%}
               {%- if onMode -%}
                 {%- set ns.userbreak = true -%}
                 {%- break -%}
               {%- endif -%}
             {%- elif states(switch.device) == "off" -%}
-              {%- set ns.cmd = mergeCmd(ns.cmd, offCmd) -%}
+              {%- set ns.cmd = mergeCmd(ns.cmd, offCmd)|from_json -%}
               {%- if offMode -%}
                 {%- set ns.userbreak = true -%}
                 {%- break -%}
@@ -1809,34 +1834,45 @@ action:
             {%- endif -%}
           {%- endif -%}
         {%- endfor -%}
-         #}
         {# ns.cmd wird über den Status der persons befüllt/geändert wenn kein switch den mode exclusiv auf true hatte #}
+        {%- set ns.debug = ns.debug ~ "<br>userbreak: " ~ ns.userbreak|string -%}
+        {%- set ns.debug = ns.debug ~ "<br>persons in devices: " ~ ("persons" in ns.devices)|string -%}
         
-        {# 
         {%- if not ns.userbreak and "persons" in ns.devices -%}
           {%- set ns.usercmd = "{}" -%}
+          {%- set ns.debug = ns.debug ~ "<br>Personen-Logik wird ausgeführt" -%}
         
           {%- for persondevice, person in ns.devices.persons.items() -%}
             {%- set name = getName(persondevice) if not ("name" in person and person.name is string and person.name|length > 0) else person.name  -%}
             {%- set state = states(persondevice) -%}
+            {%- set ns.debug = ns.debug ~ "<br>persondevice: " ~ persondevice ~ ", raw state: " ~ state ~ ", name: " ~ name -%}
             {%- set mystates = state.split("!") -%}
             {%- if mystates is list and mystates|length > 1 -%}
               {%- set state = mystates[1] -%}
               {%- set name = mystates[0] -%}
+              {%- set ns.debug = ns.debug ~ "<br>Nach Split: name='" ~ name ~ "', state='" ~ state ~ "'" -%}
+            {%- else -%}
+              {%- set ns.debug = ns.debug ~ "<br>Kein '!' im Status gefunden, verwende getName()" -%}
             {%- endif -%}
             {%- set ns.usercmd = getSettings(name, state, myConfig.cmd) -%}
+            {%- set ns.debug = ns.debug ~ "<br>getSettings('" ~ name ~ "', '" ~ state ~ "', cmd) = " ~ (ns.usercmd|string if ns.usercmd else "NICHT GEFUNDEN") -%}
             {%- set ns.usersettings = ns.usersettings + [{"name": name, "state":state, "cmd":ns.usercmd }] -%}
         
             {%- if not ns.usercmd -%}
               {%- set ns.usercmd = "{}" -%}
             {%- else -%}
             {%- endif -%}   
-            {%- set ns.cmd = mergeCmd(ns.cmd, ns.usercmd) -%}
+            {%- set ns.cmd = mergeCmd(ns.cmd, ns.usercmd)|from_json -%}
         
           {%- endfor -%}
         
+        {%- else -%}
+          {%- if ns.userbreak -%}
+            {%- set ns.debug = ns.debug ~ "<br>Personen-Logik übersprungen: userbreak=true (Switch im exklusiven Modus)" -%}
+          {%- elif not ("persons" in ns.devices) -%}
+            {%- set ns.debug = ns.debug ~ "<br>Personen-Logik übersprungen: keine persons in devices" -%}
+          {%- endif -%}
         {%- endif -%}
-         #}
         {# {%- set ns.cmd = ns.cmd|replace("'", '"')|from_json -%} #}
         {# {%- set ns.cmd = ns.cmd|from_json -%} #}
         
@@ -1846,10 +1882,11 @@ action:
         {%- if checkDiveLevelInObject(myConfig,["statefilestate","input","od"]) == 0 and myConfig.statefilestate.input.od is mapping%}
           {%- set ns.overdrived = myConfig.statefilestate.input.od -%}
         {%- endif -%}
+        #}
         
         {%- set ns.climates = ns.devices["climate"] -%}
         {%- set tmp.devices = {} -%}
-        #}
+        {%- set ns.deviceCommandsDebug = {} -%}
         {%- if myConfig.triggerClass == "overdrive" -%} 
         {# 
           {%- set tmp.output = {} if not ("output" in ns.statefile and ns.statefile.output is mapping) else ns.statefile.output -%}
@@ -1874,19 +1911,25 @@ action:
         #}
         
         {%- else -%}
-        {# 
+          {%- set ns.deviceCommandsDebug = {} -%}
           {%- for id, device in ns.climates.items() -%}
             {%- set tmp.commands = {} -%}
             {%- set tmp.device = device -%}
             {%- if "commands" in tmp.device and tmp.device.commands is mapping -%}
               {%- set tmp.commands = tmp.device.commands -%}
             {%- endif -%}
+            {%- if ns.cmd is string -%}
+              {%- set ns.cmd = ns.cmd|from_json -%}
+            {%- elif not (ns.cmd is mapping) -%}
+              {%- set ns.cmd = {} -%}
+            {%- endif -%}
             {%- for itm, val in ns.cmd.items() -%}
-              {%- if tmp.device.name is match(itm) -%}
+              {%- if tmp.device.name is match("^" ~ itm) -%}
                 {%- set tmp.commands = dict(tmp.commands, **{itm:val}) -%}
               {%- endif -%}
             {%- endfor -%}
             {%- set tmp.device = dict(tmp.device, **{"commands":tmp.commands}) -%}
+            {%- set ns.deviceCommandsDebug = dict(ns.deviceCommandsDebug, **{tmp.device.name: tmp.commands}) -%}
             {%- set action = createAction(tmp.device)|from_json -%}
             {%- for key, val in action.items() -%}
               {%- set tmp.device = dict(tmp.device, **{key:val}) -%}
@@ -1894,7 +1937,6 @@ action:
             {%- set tmp.device = dict(tmp.device, **checkOverdrivers(tmp.device)|from_json) -%}
             {%- set tmp.devices = dict(tmp.devices, **{id:tmp.device}) -%}
           {%- endfor -%}
-         #}
         {%- endif -%}  
                         
         {%- set ns.devices = dict(ns.devices, **{"climate":tmp.devices}) -%}
@@ -1915,21 +1957,10 @@ action:
         {%- endfor -%} 
          #}
         {%- set ns.debug = "<hr>DEBUG" ~ ns.devices -%}
-        {# {{- {"data": ns.cmd, "usersettings": ns.usersettings, "debug": ns.debug, "devices": ns.devices, "statefile": ns.statefile, "weekplanes": ns.weekplanes } -}} #}
-           {{- {"data": ns.cmd, "usersettings": ns.usersettings, "debug": ns.debug, "devices": {}, "statefile": ns.statefile, "weekplanes": ns.weekplanes } -}}
+        {{- {"data": ns.cmd, "usersettings": ns.usersettings, "debug": ns.debug, "devices": ns.devices, "statefile": ns.statefile, "weekplanes": ns.weekplanes, "deviceCommandsDebug": ns.deviceCommandsDebug } -}}
         
 
   # Debug - Message  post    
-  - if:
-      - condition: template
-        value_template: "{{debugmode}}"
-    then:
-  
-      - action: notify.persistent_notification
-        metadata: {}
-        data:
-          title: "Debug TgHeating"
-          message: '{{ mySettings is mapping }}'   
   
   - variables:
       my_devicesMsg: >-
@@ -1945,6 +1976,71 @@ action:
             value_template: "{{debugmode}}"
         then:
           - variables:
+              myWeekplanDebugMsg: >-
+                {# ___________________________________________________ #}
+                {%- macro dumpToHTML(val, filter=[], maxSteps=3, testJson=false, details=0, thisStep=0) -%}
+                  {%- set patternMap = '^[\s]*\{[\S\s]*\}[\s]*$' -%}
+                  {%- set patternList = '^[\s]*\[[\S\s]*\][\s]*$' -%}
+                
+                  {%- set dump = namespace() -%} 
+                  {%- set dump.tmp="" -%}
+                  {%- set dump.val=val -%}
+                  {%- set dump.valType=none -%}
+                  {%- set myFilter=filter -%}
+                  {%- set filter=[] -%}
+                  {%- set thisStep=thisStep + 1 -%}
+                  
+                  {%- if thisStep > maxSteps -%}
+                    {%- if dump.val is list or dump.val is mapping -%} {%- set dump.tmp = dump.val|to_json -%} {%- else -%} {%- set dump.tmp = dump.val -%} {%- endif -%}
+                    {%- set dump.valType="json" -%}
+                  {%- else -%}
+                    {%- if dump.val is string and testJson == true and ( dump.val is search(patternMap) or dump.val is search(patternList) )-%}
+                      {%- set dump.val=dump.val|replace("'", '"')|from_json -%}
+                    {%- endif -%}
+                    {%- if dump.val is list -%}
+                      {%- set dump.valType="list" -%}
+                      {%- set dump.tmp = dump.tmp ~ "<ul>" -%} 
+                      {%- for item in dump.val -%}
+                        {%- set myDump = dumpToHTML(item, filter, maxSteps, testJson, details, thisStep)|from_json -%}
+                        {%- set dump.tmp = dump.tmp ~ "<li>" ~ myDump[1] ~ "</li>" -%}
+                      {%- endfor -%}
+                      {%- set dump.tmp = dump.tmp ~ "</ul>" -%} 
+                    {%- elif dump.val is mapping -%}
+                      {%- set dump.valType="dict" -%}
+                      {%- set dump.tmp = dump.tmp ~ "<ul>" -%} 
+                      {%- for name, item in dump.val.items() -%}
+                        {%- if thisStep > 1 or name not in myFilter -%}
+                          {%- set preTxt = "<li>" -%}
+                          {%- set postTxt = "</li>" -%}
+                          {%- set nameTxtStart = "<b>" -%}
+                          {%- set NameTxtEnd = "</b>" -%}
+                          {%- set myDump = dumpToHTML(item, filter, maxSteps, testJson, details, thisStep)|from_json -%}
+                          {%- if details == thisStep and myDump[0] == "dict" -%}
+                            {%- set preTxt = preTxt ~ "<details>" -%}
+                            {%- set postTxt = "</details>" ~ postTxt -%}
+                            {%- set nameTxtStart = "<summary>" ~ nameTxtStart -%}
+                            {%- set NameTxtEnd = NameTxtEnd ~ "</summary>" -%}
+                          {%- endif -%}
+                
+                          {%- set dump.tmp = dump.tmp ~ preTxt ~ nameTxtStart ~ name ~ ": " ~ NameTxtEnd ~ myDump[1] ~ postTxt -%}
+                        {%- endif -%}
+                      {%- endfor -%}
+                      {%- set dump.tmp = dump.tmp ~ "</ul>" -%} 
+                    {%- elif dump.val is string or dump.val is number -%}
+                      {%- set dump.tmp = dump.tmp ~ " " ~ dump.val ~ "" -%} 
+                      {%- set dump.valType="string" -%}
+                    {%- endif -%}
+                  {%- endif -%}
+                
+                  {%- if thisStep == 1 -%}
+                    {{- dump.tmp -}}
+                  {%- else -%}
+                    {{- [dump.valType, dump.tmp]|to_json -}}
+                  {%- endif -%}
+                {%- endmacro -%}
+                
+                {{ "<u>Weekplans</u><br>" ~ dumpToHTML(myWeekplan, ["debug"], 5, true, 3) }}
+                
               mySettingsDebugMsg: >-
                 {# ___________________________________________________ #}
                 {%- macro dumpToHTML(val, filter=[], maxSteps=3, testJson=false, details=0, thisStep=0) -%}
@@ -2008,20 +2104,78 @@ action:
                   {%- endif -%}
                 {%- endmacro -%}
                 
-                {{ "Result:<br><u>Weekplans</u>" ~ dumpToHTML(myWeekplan, ["debug"], 5, true, 3) ~ "<hr><u>Settings</u><br>" ~ dumpToHTML(mySettings, ["debugg", "weekplanes"], 5, true, 2) }}
+                {{ "<u>Settings</u><br>" ~ dumpToHTML(mySettings, ["debugg", "weekplanes"], 5, true, 2) }}
                 
   
           - action: notify.persistent_notification
             metadata: {}
             data:
-              title: "Debug TgHeating"
+              title: "Debug TgHeating - Weekplans"
+              message: '{{ myWeekplanDebugMsg }}'
+          
+          - action: notify.persistent_notification
+            metadata: {}
+            data:
+              title: "Debug TgHeating - Settings"
               message: '{{ mySettingsDebugMsg }}'   
+          
+          - if:
+              - condition: template
+                value_template: "{{debugmode}}"
+            then:
+              - action: notify.persistent_notification
+                metadata: {}
+                data:
+                  title: "Debug TgHeating - Device Commands"
+                  message: >-
+                    {%- if "deviceCommandsDebug" in mySettings and mySettings.deviceCommandsDebug is mapping -%}
+                      {%- for name, commands in mySettings.deviceCommandsDebug.items() -%}
+                        <b>{{name}}:</b> {{commands|to_json}}<br>
+                      {%- endfor -%}
+                    {%- else -%}
+                      Keine Device Commands gefunden
+                    {%- endif -%}
+          
+          - if:
+              - condition: template
+                value_template: "{{debugmode}}"
+            then:
+              - action: notify.persistent_notification
+                metadata: {}
+                data:
+                  title: "Debug TgHeating - Statefile State"
+                  message: >-
+                    statefile.state: {{mySettings.statefile.state if "statefile" in mySettings and "state" in mySettings.statefile else "nicht definiert"}}<br>
+                    inp_use_statehelper: {{inp_use_statehelper}}<br>
+                    inp_use_statefile: {{inp_use_statefile}}<br>
+                    helper exists: {{states(inp_use_statehelper) != "unavailable" if inp_use_statehelper and inp_use_statehelper != "-" else "N/A"}}<br>
+                    helper state: {{states(inp_use_statehelper) if inp_use_statehelper and inp_use_statehelper != "-" else "N/A"}}
+  
+      # Debug: Pfad-Tracking nach Settings
+      - if:
+          - condition: template
+            value_template: "{{debugmode}}"
+        then:
+          - action: notify.persistent_notification
+            metadata: {}
+            data:
+              title: "Debug TgHeating - Pfad [1]"
+              message: '✅ Settings erfolgreich geladen, starte Device-Verarbeitung'
   
       # Weekplan set next timer    
       - if:
           - condition: template
             value_template: "{{ 'weekplanes' in mySettings and mySettings.weekplanes.next is defined and mySettings.weekplanes.next is number and weekplan_timer and weekplan_timer != '-' and weekplan_timer|length > 0 }}"
         then:
+          - if:
+              - condition: template
+                value_template: "{{debugmode}}"
+            then:
+              - action: notify.persistent_notification
+                metadata: {}
+                data:
+                  title: "Debug TgHeating - Pfad [2]"
+                  message: '✅ Weekplan Timer: Setze Timer auf {{mySettings.weekplanes.next}} Sekunden'
           - action: timer.cancel
             metadata: {}
             data: {}
@@ -2033,31 +2187,88 @@ action:
               duration: "{{mySettings.weekplanes.next}}"
             target:
               entity_id: "{{weekplan_timer}}"
+        else:
+          - if:
+              - condition: template
+                value_template: "{{debugmode}}"
+            then:
+              - action: notify.persistent_notification
+                metadata: {}
+                data:
+                  title: "Debug TgHeating - Pfad [2]"
+                  message: '⏭️ Weekplan Timer: Bedingung nicht erfüllt (next={{mySettings.weekplanes.next if "weekplanes" in mySettings and "next" in mySettings.weekplanes else "nicht definiert"}}, timer={{weekplan_timer}})'
   
       # write States    
       - if:
           - condition: template
             value_template: "{{ 'statefile' in mySettings and mySettings.statefile.state == 'file' }}"
         then:
+          - if:
+              - condition: template
+                value_template: "{{debugmode}}"
+            then:
+              - action: notify.persistent_notification
+                metadata: {}
+                data:
+                  title: "Debug TgHeating - Pfad [3]"
+                  message: '✅ Statefile: Schreibe in Datei {{inp_use_statefile}}'
           - action: shell_command.write_to_file
             data:
               file: "{{- inp_use_statefile -}}"
               txt: >-
                 {{- mySettings.statefile.output|replace('"',"\'") -}}
             response_variable: statefile_write
+        else:
+          - if:
+              - condition: template
+                value_template: "{{debugmode}}"
+            then:
+              - action: notify.persistent_notification
+                metadata: {}
+                data:
+                  title: "Debug TgHeating - Pfad [3]"
+                  message: '⏭️ Statefile (Datei): Bedingung nicht erfüllt (state={{mySettings.statefile.state if "statefile" in mySettings and "state" in mySettings.statefile else "nicht definiert"}})'
       - if:
           - condition: template
             value_template: "{{ 'statefile' in mySettings and mySettings.statefile.state == 'helper' and inp_use_statehelper and inp_use_statehelper != '-' and inp_use_statehelper|length > 0 and mySettings.statefile.output|length <= state_attr(inp_use_statehelper, 'max' )|int }}"
         then:
+          - if:
+              - condition: template
+                value_template: "{{debugmode}}"
+            then:
+              - action: notify.persistent_notification
+                metadata: {}
+                data:
+                  title: "Debug TgHeating - Pfad [4]"
+                  message: '✅ Statefile: Schreibe in Helper {{inp_use_statehelper}}'
           - action: input_text.set_value
             metadata: {}
             data:
               value: "{{- mySettings.statefile.output -}}"
             target:
               entity_id: "{{- inp_use_statehelper -}}"
+        else:
+          - if:
+              - condition: template
+                value_template: "{{debugmode}}"
+            then:
+              - action: notify.persistent_notification
+                metadata: {}
+                data:
+                  title: "Debug TgHeating - Pfad [4]"
+                  message: '⏭️ Statefile (Helper): Bedingung nicht erfüllt (state={{mySettings.statefile.state if "statefile" in mySettings and "state" in mySettings.statefile else "nicht definiert"}}, helper={{inp_use_statehelper}})'
   
       # ########################################################################################################################################
       # DEVICE: HM-IP, SET: programm
+      - if:
+          - condition: template
+            value_template: "{{debugmode}}"
+        then:
+          - action: notify.persistent_notification
+            metadata: {}
+            data:
+              title: "Debug TgHeating - Pfad [5]"
+              message: '🔍 Prüfe Devices: HM-IP, SET: program'
       - variables:
           my_devices: '{{  {} if not "climate" in mySettings.devices else mySettings.devices.climate.values() | selectattr("class", "equalto", "HmIP")| selectattr("mode", "equalto", "program") | list }}'
           my_devicesMsg: >-
@@ -2081,6 +2292,15 @@ action:
             {#- ___________________________________________________ -#}
             {{ getDevicesMsg("class=HmIP | mode=program") }} 
   
+      - if:
+          - condition: template
+            value_template: "{{debugmode}}"
+        then:
+          - action: notify.persistent_notification
+            metadata: {}
+            data:
+              title: "Debug TgHeating - Pfad [6]"
+              message: '{{ "✅ HM-IP program: " ~ my_devices|length|string ~ " Device(s) gefunden" if my_devices|length > 0 else "⏭️ HM-IP program: Keine Devices gefunden" }}'
       - repeat:
           count: "{{my_devices|length|int}}"
           sequence:
@@ -2124,6 +2344,15 @@ action:
            
             
       # DEVICE: HM, SET: programm                
+      - if:
+          - condition: template
+            value_template: "{{debugmode}}"
+        then:
+          - action: notify.persistent_notification
+            metadata: {}
+            data:
+              title: "Debug TgHeating - Pfad [7]"
+              message: '🔍 Prüfe Devices: HM, SET: program'
       - variables:
           my_devices: '{{  {} if not "climate" in mySettings.devices else mySettings.devices.climate.values() | selectattr("class", "==", "HM") | selectattr("subdevice", "defined") | selectattr("mode", "==", "program") | list }}'
           my_devicesMsg: >-
@@ -2147,6 +2376,15 @@ action:
             {#- ___________________________________________________ -#}
             {{ getDevicesMsg("class=HM | mode=program") }}
   
+      - if:
+          - condition: template
+            value_template: "{{debugmode}}"
+        then:
+          - action: notify.persistent_notification
+            metadata: {}
+            data:
+              title: "Debug TgHeating - Pfad [8]"
+              message: '{{ "✅ HM program: " ~ my_devices|length|string ~ " Device(s) gefunden" if my_devices|length > 0 else "⏭️ HM program: Keine Devices gefunden" }}'
       - repeat:
           count: "{{my_devices|length|int}}"
           sequence:
@@ -2173,6 +2411,15 @@ action:
   
       # DEVICE: HM-IP HM, SET: off
   
+      - if:
+          - condition: template
+            value_template: "{{debugmode}}"
+        then:
+          - action: notify.persistent_notification
+            metadata: {}
+            data:
+              title: "Debug TgHeating - Pfad [9]"
+              message: '🔍 Prüfe Devices: HM-IP/HM, SET: off'
       - variables:
           my_devices: '{{  {} if not "climate" in mySettings.devices else mySettings.devices.climate.values() | selectattr("class", "match", "^H[Mm].*") | selectattr("mode", "==", "off") | list }}'
           my_devicesMsg: >-
@@ -2196,6 +2443,15 @@ action:
             {#- ___________________________________________________ -#}
             {{ getDevicesMsg("class=HM,HmIP | mode=off") }}
   
+      - if:
+          - condition: template
+            value_template: "{{debugmode}}"
+        then:
+          - action: notify.persistent_notification
+            metadata: {}
+            data:
+              title: "Debug TgHeating - Pfad [10]"
+              message: '{{ "✅ HM-IP/HM off: " ~ my_devices|length|string ~ " Device(s) gefunden" if my_devices|length > 0 else "⏭️ HM-IP/HM off: Keine Devices gefunden" }}'
       - repeat:
           count: "{{my_devices|length|int}}"
           sequence:
@@ -2207,6 +2463,15 @@ action:
   
       # DEVICE: HM-IP HM, SET: Temp
   
+      - if:
+          - condition: template
+            value_template: "{{debugmode}}"
+        then:
+          - action: notify.persistent_notification
+            metadata: {}
+            data:
+              title: "Debug TgHeating - Pfad [11]"
+              message: '🔍 Prüfe Devices: HM-IP/HM, SET: temp'
       - variables:
           my_devices: '{{  {} if not "climate" in mySettings.devices else mySettings.devices.climate.values() | selectattr("class", "match", "^H[Mm].*") | selectattr("mode", "==", "temp") | list }}'
           my_devicesMsg: >-
@@ -2230,6 +2495,15 @@ action:
             {#- ___________________________________________________ -#}
             {{ getDevicesMsg("class=HM,HmIP | mode=temp") }}
   
+      - if:
+          - condition: template
+            value_template: "{{debugmode}}"
+        then:
+          - action: notify.persistent_notification
+            metadata: {}
+            data:
+              title: "Debug TgHeating - Pfad [12]"
+              message: '{{ "✅ HM-IP/HM temp: " ~ my_devices|length|string ~ " Device(s) gefunden" if my_devices|length > 0 else "⏭️ HM-IP/HM temp: Keine Devices gefunden" }}'
       - repeat:
           count: "{{my_devices|length|int}}"
           sequence:
@@ -2242,12 +2516,16 @@ action:
                   data: {}
                   target:
                     entity_id: "{{- my_devices[repeat.index - 1].device -}}"
-                - action: climate.set_preset_mode
-                  metadata: {}
-                  data:
-                    preset_mode: none
-                  target:
-                    entity_id: "{{- my_devices[repeat.index - 1].device -}}"
+                - if:
+                    - condition: template
+                      value_template: "{{ state_attr(my_devices[repeat.index - 1].device, 'preset_modes') is defined and state_attr(my_devices[repeat.index - 1].device, 'preset_modes') is iterable and state_attr(my_devices[repeat.index - 1].device, 'preset_modes')|length > 0 }}"
+                  then:
+                    - action: climate.set_preset_mode
+                      metadata: {}
+                      data:
+                        preset_mode: none
+                      target:
+                        entity_id: "{{- my_devices[repeat.index - 1].device -}}"
                 - action: climate.set_temperature
                   metadata: {}
                   data:
@@ -2259,6 +2537,15 @@ action:
   
       # DEVICE: not HM-IP not HM, SET: off
   
+      - if:
+          - condition: template
+            value_template: "{{debugmode}}"
+        then:
+          - action: notify.persistent_notification
+            metadata: {}
+            data:
+              title: "Debug TgHeating - Pfad [13]"
+              message: '🔍 Prüfe Devices: Default, SET: off'
       - variables:
           my_devices: '{{  {} if not "climate" in mySettings.devices else mySettings.devices.climate.values() | selectattr("class", "equalto", "-") | selectattr("mode", "equalto", "off") | list }}'
           my_devicesMsg: >-
@@ -2282,6 +2569,15 @@ action:
             {#- ___________________________________________________ -#}
             {{ getDevicesMsg("class=default | mode=off") }}
   
+      - if:
+          - condition: template
+            value_template: "{{debugmode}}"
+        then:
+          - action: notify.persistent_notification
+            metadata: {}
+            data:
+              title: "Debug TgHeating - Pfad [14]"
+              message: '{{ "✅ Default off: " ~ my_devices|length|string ~ " Device(s) gefunden" if my_devices|length > 0 else "⏭️ Default off: Keine Devices gefunden" }}'
       - repeat:
           count: "{{my_devices|length|int}}"
           sequence:
@@ -2297,6 +2593,15 @@ action:
   
       # DEVICE: not HM-IP not HM, SET: Temp
   
+      - if:
+          - condition: template
+            value_template: "{{debugmode}}"
+        then:
+          - action: notify.persistent_notification
+            metadata: {}
+            data:
+              title: "Debug TgHeating - Pfad [15]"
+              message: '🔍 Prüfe Devices: Default, SET: temp'
       - variables:
           my_devices: '{{  {} if not "climate" in mySettings.devices else mySettings.devices.climate.values() | selectattr("class", "equalto", "-") | selectattr("mode", "equalto", "temp") | list }}'
           my_devicesMsg: >-
@@ -2319,7 +2624,39 @@ action:
             {%- endmacro -%}
             {#- ___________________________________________________ -#}
             {{ getDevicesMsg("class=default | mode=temp") }}
+          my_all_devices: '{{ mySettings.devices.climate.values() | list if "climate" in mySettings.devices else [] }}'
   
+      - if:
+          - condition: template
+            value_template: "{{debugmode}}"
+        then:
+          - action: notify.persistent_notification
+            metadata: {}
+            data:
+              title: "Debug TgHeating - Pfad [15] Alle Devices"
+              message: >-
+                {%- if my_all_devices|length > 0 -%}
+                  {%- for device in my_all_devices -%}
+                    <b>{{device.name if device.name is defined else "unbekannt"}}:</b><br>
+                    &nbsp;&nbsp;class: {{device.class if device.class is defined else "n/a"}}<br>
+                    &nbsp;&nbsp;mode: {{device.mode if device.mode is defined else "n/a"}}<br>
+                    &nbsp;&nbsp;cmd: {{device.cmd if device.cmd is defined else "n/a"}}<br>
+                    &nbsp;&nbsp;action: {{device.action if device.action is defined else "n/a"}}<br>
+                    <br>
+                  {%- endfor -%}
+                {%- else -%}
+                  Keine Devices in mySettings.devices.climate gefunden
+                {%- endif -%}
+  
+      - if:
+          - condition: template
+            value_template: "{{debugmode}}"
+        then:
+          - action: notify.persistent_notification
+            metadata: {}
+            data:
+              title: "Debug TgHeating - Pfad [16]"
+              message: '{{ "✅ Default temp: " ~ my_devices|length|string ~ " Device(s) gefunden" if my_devices|length > 0 else "⏭️ Default temp: Keine Devices gefunden" }}'
       - repeat:
           count: "{{my_devices|length|int}}"
           sequence:
@@ -2332,12 +2669,16 @@ action:
                   data: {}
                   target:
                     entity_id: "{{- my_devices[repeat.index - 1].device -}}"
-                - action: climate.set_preset_mode
-                  metadata: {}
-                  data:
-                    preset_mode: none
-                  target:
-                    entity_id: "{{- my_devices[repeat.index - 1].device -}}"
+                - if:
+                    - condition: template
+                      value_template: "{{ state_attr(my_devices[repeat.index - 1].device, 'preset_modes') is defined and state_attr(my_devices[repeat.index - 1].device, 'preset_modes') is iterable and state_attr(my_devices[repeat.index - 1].device, 'preset_modes')|length > 0 }}"
+                  then:
+                    - action: climate.set_preset_mode
+                      metadata: {}
+                      data:
+                        preset_mode: none
+                      target:
+                        entity_id: "{{- my_devices[repeat.index - 1].device -}}"
                 - action: climate.set_temperature
                   metadata: {}
                   data:
@@ -2345,9 +2686,36 @@ action:
                     hvac_mode: heat
                   target:
                     entity_id: "{{- my_devices[repeat.index - 1].device -}}"     
+      
+      - if:
+          - condition: template
+            value_template: "{{debugmode and my_devices|length > 0}}"
+        then:
+          - action: notify.persistent_notification
+            metadata: {}
+            data:
+              title: "Debug TgHeating - Pfad [16] Details"
+              message: >-
+                {%- for device in my_devices -%}
+                  <b>{{device.name if device.name is defined else device.device}}:</b><br>
+                  &nbsp;&nbsp;cmd: {{device.cmd if device.cmd is defined else "n/a"}}<br>
+                  &nbsp;&nbsp;action: {{device.action if device.action is defined else "n/a"}}<br>
+                  &nbsp;&nbsp;mode: {{device.mode if device.mode is defined else "n/a"}}<br>
+                  &nbsp;&nbsp;device: {{device.device if device.device is defined else "n/a"}}<br>
+                  <br>
+                {%- endfor -%}
   
       # DEVICE: Overdrivers SET: Temp
   
+      - if:
+          - condition: template
+            value_template: "{{debugmode}}"
+        then:
+          - action: notify.persistent_notification
+            metadata: {}
+            data:
+              title: "Debug TgHeating - Pfad [17]"
+              message: '🔍 Prüfe Devices: Overdrivers'
       - variables:
           my_devices: '{{  {} if not "climate" in mySettings.devices else mySettings.devices.climate.values() | selectattr("overdrivers", "defined") | rejectattr("overdrivers", "equalto", "false")  | list }}'
           my_devicesMsg: >-
@@ -2370,6 +2738,16 @@ action:
             {%- endmacro -%}
             {#- ___________________________________________________ -#}
             {{ getDevicesMsg("set Overdrivers") }}
+  
+      - if:
+          - condition: template
+            value_template: "{{debugmode}}"
+        then:
+          - action: notify.persistent_notification
+            metadata: {}
+            data:
+              title: "Debug TgHeating - Pfad [18]"
+              message: '{{ "✅ Overdrivers: " ~ my_devices|length|string ~ " Device(s) gefunden" if my_devices|length > 0 else "⏭️ Overdrivers: Keine Devices gefunden" }}'
       - repeat:
           count: "{{my_devices|length|int }}"
           sequence:
@@ -2464,13 +2842,57 @@ action:
                   {%- endif -%}
                 {%- endmacro -%}
                 {{ "modified Devices:" ~ dumpToHTML(my_devicesMsg|from_json, [], 5, true, 2) }}
+        else:
+          - if:
+              - condition: template
+                value_template: "{{debugmode}}"
+            then:
+              - action: notify.persistent_notification
+                metadata: {}
+                data:
+                  title: "Debug TgHeating"
+                  message: >-
+                    '{{ "debugmode: " ~ debugmode|string ~ " | my_devicesMsg: " ~ (my_devicesMsg|string if my_devicesMsg else "nicht definiert")}}'
+  
+      # Debug: Abschluss
+      - if:
+          - condition: template
+            value_template: "{{debugmode}}"
+        then:
+          - action: notify.persistent_notification
+            metadata: {}
+            data:
+              title: "Debug TgHeating - Pfad [19]"
+              message: '✅ Automation erfolgreich abgeschlossen - alle Device-Bereiche durchlaufen'
   
     else:
+      - if:
+          - condition: template
+            value_template: "{{debugmode}}"
+        then:
+          - action: notify.persistent_notification
+            metadata: {}
+            data:
+              title: "Debug TgHeating - Pfad [ERROR]"
+              message: '❌ FEHLER: mySettings ist kein Mapping - Automation abgebrochen'
       - action: notify.persistent_notification
         metadata: {}
         data:
           title: "Debug TgHeating"
           message: "Error in Settings Variable"
+  
+  
+  - if:
+      - condition: template
+        value_template: "{{debugmode}}"
+    then:
+  
+      - action: notify.persistent_notification
+        metadata: {}
+        data:
+          title: "Debug TgHeating - Output"
+          message: '{{ "bis hier ging es gut" }}'   
+  
 
 mode: single
 
